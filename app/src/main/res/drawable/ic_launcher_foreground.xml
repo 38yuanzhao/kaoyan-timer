@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Centered clock icon within the safe area (approx 24..84), stroke color accent #FF6B5E -->
+    <group
+        android:translateX="0"
+        android:translateY="0">
+        <!-- Clock outer ring -->
+        <path
+            android:strokeColor="#FF6B5E"
+            android:strokeWidth="5"
+            android:fillColor="#00000000"
+            android:pathData="M54,24a30,30 0 1,0 0.01,0z" />
+        <!-- Hour hand -->
+        <path
+            android:strokeColor="#FF6B5E"
+            android:strokeWidth="5"
+            android:strokeLineCap="round"
+            android:fillColor="#00000000"
+            android:pathData="M54,54L54,38" />
+        <!-- Minute hand -->
+        <path
+            android:strokeColor="#FF6B5E"
+            android:strokeWidth="5"
+            android:strokeLineCap="round"
+            android:fillColor="#00000000"
+            android:pathData="M54,54L70,60" />
+    </group>
+</vector>
