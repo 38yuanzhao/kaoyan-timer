@@ -61,10 +61,6 @@
 ./gradlew assembleDebug   # 产物:app/build/outputs/apk/debug/app-debug.apk(自测用,非发布物)
 ```
 
-### 发版(签名 Release)
-
-推送形如 `v*` 的 Git tag(如 `git tag v2.3 && git push origin v2.3`)会触发 CI([`.github/workflows/android.yml`](.github/workflows/android.yml)),用密钥自动 `assembleRelease` 出**正式签名**的 `app-release.apk`,并创建 GitHub Release 附上安装包。普通用户去 Releases 下载即可。
-
 ### 技术栈
 
 - 语言:Kotlin 1.9.24
