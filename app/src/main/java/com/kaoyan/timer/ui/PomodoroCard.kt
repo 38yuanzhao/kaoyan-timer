@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -31,9 +32,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextDecoration
 import com.kaoyan.timer.KaoyanViewModel
 import com.kaoyan.timer.model.AppState
+import com.kaoyan.timer.model.Item
+import com.kaoyan.timer.model.Pomo
+import com.kaoyan.timer.model.Subtask
 import com.kaoyan.timer.util.mmss
+import java.util.UUID
 
 private data class PomoOption(val id: String, val label: String)
 
@@ -60,10 +74,13 @@ fun PomodoroCard(
     }
     var expanded by remember { mutableStateOf(false) }
     var showDurationDialog by remember { mutableStateOf(false) }
+    var showBreakdown by remember { mutableStateOf(false) }
 
+    val selItem = state.subjects.flatMap { it.items }.firstOrNull { it.id == selectedId }
     val selectedLabel = options.firstOrNull { it.id == selectedId }?.label ?: "选择子项"
 
     val isBreak = state.pomo?.phase == "break"
+    val isOvertime = state.pomo?.phase == "overtime"
     val paused = state.pomo?.pausedAt != null
     val remainSec: Long = if (pomoRunning) {
         vm.pomoRemainSec(now)
@@ -79,6 +96,7 @@ fun PomodoroCard(
     val ringColor = if (isBreak) ColorAccent2 else ColorGood
     val phaseLabel = when {
         paused -> "已暂停"
+        isOvertime -> "超时中 · 点完成结束"
         state.pomo?.phase == "focus" -> "专注中"
         state.pomo?.phase == "break" -> "休息中"
         else -> "待开始 · 点击数字改时长"
@@ -123,7 +141,7 @@ fun PomodoroCard(
         }
 
         Spacer(Modifier.height(20.dp))
-        val timeStr = mmss(remainSec)
+        val timeStr = if (isOvertime) "+" + mmss(vm.pomoOvertimeSec(now)) else mmss(remainSec)
         BoxWithConstraints(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             val ringD = if (maxWidth < 260.dp) maxWidth else 260.dp
             val fs = ringD.value * 0.205f
@@ -153,38 +171,83 @@ fun PomodoroCard(
         Spacer(Modifier.height(16.dp))
 
         if (!pomoRunning) {
-            Button(
-                onClick = { selectedId?.let { vm.startPomo(it) } },
-                enabled = selectedId != null,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = ColorGood,
-                    contentColor = ColorBg
-                )
-            ) { Text("开始 ▶", fontWeight = FontWeight.SemiBold) }
-        } else {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                OutlinedButton(
+                    onClick = { showBreakdown = true },
+                    enabled = selItem != null,
+                    modifier = Modifier.weight(1f).height(52.dp)
+                ) {
+                    val n = selItem?.subtasks?.size ?: 0
+                    Text(if (n > 0) "拆解 · $n" else "拆解任务", color = ColorGood, fontWeight = FontWeight.SemiBold)
+                }
                 Button(
-                    onClick = { if (paused) vm.resumePomo() else vm.pausePomo() },
-                    modifier = Modifier.weight(1f).height(52.dp),
+                    onClick = { selectedId?.let { vm.startPomo(it) } },
+                    enabled = selectedId != null,
+                    modifier = Modifier.weight(1.4f).height(52.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = ColorGood,
                         contentColor = ColorBg
                     )
-                ) { Text(if (paused) "继续 ▶" else "暂停 ❚❚", fontWeight = FontWeight.SemiBold) }
+                ) { Text("开始 ▶", fontWeight = FontWeight.SemiBold) }
+            }
+        } else {
+            val chainSub = state.pomo?.subtaskId
+            if (chainSub != null && selItem != null && !isBreak) {
+                // 拆解链 focus/超时态:主操作是「完成本段」,暂停/停止降为描边
                 Button(
-                    onClick = { vm.stopPomo() },
-                    modifier = Modifier.weight(1f).height(52.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = ColorAccent,
-                        contentColor = ColorBg
-                    )
-                ) { Text("停止", fontWeight = FontWeight.SemiBold) }
+                    onClick = { vm.markSubtaskDone(selItem.id, chainSub) },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = ColorGood, contentColor = ColorBg)
+                ) { Text("完成本段 ✓", fontWeight = FontWeight.SemiBold) }
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { if (paused) vm.resumePomo() else vm.pausePomo() },
+                        modifier = Modifier.weight(1f).height(52.dp)
+                    ) { Text(if (paused) "继续 ▶" else "暂停 ❚❚", color = ColorGood, fontWeight = FontWeight.SemiBold) }
+                    OutlinedButton(
+                        onClick = { vm.stopPomo() },
+                        modifier = Modifier.weight(1f).height(52.dp)
+                    ) { Text("停止", color = ColorAccent, fontWeight = FontWeight.SemiBold) }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Button(
+                        onClick = { if (paused) vm.resumePomo() else vm.pausePomo() },
+                        modifier = Modifier.weight(1f).height(52.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = ColorGood, contentColor = ColorBg)
+                    ) { Text(if (paused) "继续 ▶" else "暂停 ❚❚", fontWeight = FontWeight.SemiBold) }
+                    Button(
+                        onClick = { vm.stopPomo() },
+                        modifier = Modifier.weight(1f).height(52.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = ColorAccent, contentColor = ColorBg)
+                    ) { Text("停止", fontWeight = FontWeight.SemiBold) }
+                }
+            }
+            // 拆解链运行态:卡片内清单条
+            if (state.pomo?.subtaskId != null && selItem != null) {
+                Spacer(Modifier.height(16.dp))
+                ChainChecklist(vm, selItem, state.pomo)
             }
         }
+    }
+
+    if (showBreakdown && selItem != null) {
+        BreakdownSheet(
+            vm = vm,
+            item = selItem,
+            onDismiss = { showBreakdown = false },
+            onStart = { vm.startSubtaskChain(selItem.id) }
+        )
     }
 
     if (showDurationDialog) {
@@ -237,6 +300,180 @@ private fun PomoDurationDialog(
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("完成", color = ColorGood) }
         },
+        containerColor = ColorCard2,
+        titleContentColor = ColorFg,
+        textContentColor = ColorFg
+    )
+}
+
+/** 拆解链清单条:竖排小任务,当前高亮、已完成划线、可手动打勾。卡片态与全屏专注共用。 */
+@Composable
+fun ChainChecklist(vm: KaoyanViewModel, item: Item, pomo: Pomo?, modifier: Modifier = Modifier) {
+    val subs = item.subtasks
+    if (subs.isEmpty()) return
+    val remaining = subs.count { !it.done }
+    Column(modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SectionTitle("清单条")
+            Text("还剩 $remaining 个", color = ColorMuted, fontSize = 12.sp)
+        }
+        Spacer(Modifier.height(8.dp))
+        subs.forEach { st ->
+            val current = pomo?.subtaskId == st.id && (pomo.phase == "focus" || pomo.phase == "overtime")
+            val marker = when { st.done -> "✓"; current -> "▶"; else -> "○" }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !st.done) { vm.markSubtaskDone(item.id, st.id) }
+                    .padding(vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    marker,
+                    color = if (st.done) ColorAccent2 else if (current) ColorGood else ColorMuted,
+                    fontSize = 15.sp
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    st.name,
+                    color = if (st.done) ColorMuted else if (current) ColorGood else ColorFg,
+                    fontSize = 15.sp,
+                    fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
+                    textDecoration = if (st.done) TextDecoration.LineThrough else null,
+                    modifier = Modifier.weight(1f)
+                )
+                Text("${st.estMin} 分", color = ColorMuted, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+/** 拆解面板:底部弹出,编辑某子项的小任务(名字 + 预估时长),开始即连跑。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BreakdownSheet(
+    vm: KaoyanViewModel,
+    item: Item,
+    onDismiss: () -> Unit,
+    onStart: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val rows = remember { mutableStateListOf<Subtask>().apply { addAll(item.subtasks) } }
+    var newName by remember { mutableStateOf("") }
+    var timeEditId by remember { mutableStateOf<String?>(null) }
+
+    ModalBottomSheet(
+        onDismissRequest = { vm.saveSubtasks(item.id, rows.toList()); onDismiss() },
+        sheetState = sheetState,
+        containerColor = ColorCard2
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
+            Text("拆解任务 · ${item.name}", color = ColorFg, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            Text("拆成几段,每段填你估的时间", color = ColorMuted, fontSize = 13.sp)
+            Spacer(Modifier.height(14.dp))
+
+            rows.forEachIndexed { idx, st ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(st.name, color = ColorFg, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Text(
+                        "${st.estMin} 分",
+                        color = ColorGood,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .border(0.5.dp, ColorLine, RoundedCornerShape(8.dp))
+                            .clickable { timeEditId = st.id }
+                            .padding(horizontal = 12.dp, vertical = 7.dp)
+                    )
+                    Text(
+                        "✕",
+                        color = ColorAccent,
+                        fontSize = 15.sp,
+                        modifier = Modifier.clickable { rows.removeAt(idx) }.padding(6.dp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(
+                value = newName,
+                onValueChange = { newName = it },
+                placeholder = { Text("+ 加小任务,点右侧确认", color = ColorMuted) },
+                singleLine = true,
+                trailingIcon = {
+                    TextButton(
+                        onClick = {
+                            val nm = newName.trim()
+                            if (nm.isNotEmpty()) {
+                                rows.add(Subtask(UUID.randomUUID().toString(), nm, 25))
+                                newName = ""
+                            }
+                        },
+                        enabled = newName.isNotBlank()
+                    ) { Text("添加", color = ColorGood) }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(Modifier.height(14.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("共 ${rows.size} 个小任务", color = ColorMuted, fontSize = 13.sp)
+                Text("预计 ${rows.sumOf { it.estMin }} 分钟", color = ColorMuted, fontSize = 13.sp)
+            }
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = { vm.saveSubtasks(item.id, rows.toList()); onStart(); onDismiss() },
+                enabled = rows.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = ColorGood, contentColor = ColorBg)
+            ) { Text("开始专注 ▶", fontWeight = FontWeight.SemiBold) }
+        }
+    }
+
+    timeEditId?.let { sid ->
+        val idx = rows.indexOfFirst { it.id == sid }
+        if (idx >= 0) {
+            SubtaskTimeDialog(
+                initial = rows[idx].estMin,
+                onDismiss = { timeEditId = null },
+                onConfirm = { m -> rows[idx] = rows[idx].copy(estMin = m); timeEditId = null }
+            )
+        } else timeEditId = null
+    }
+}
+
+/** 单个小任务的预估时长滚轮对话框(复用 WheelMinutePicker)。 */
+@Composable
+private fun SubtaskTimeDialog(initial: Int, onDismiss: () -> Unit, onConfirm: (Int) -> Unit) {
+    var v by remember { mutableStateOf(initial.coerceIn(5, 120)) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("预估时长", color = ColorFg) },
+        text = {
+            WheelMinutePicker(
+                label = "分钟",
+                value = v,
+                range = 5..120,
+                enabled = true,
+                onChange = { v = it },
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(v) }) { Text("完成", color = ColorGood) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消", color = ColorMuted) } },
         containerColor = ColorCard2,
         titleContentColor = ColorFg,
         textContentColor = ColorFg
