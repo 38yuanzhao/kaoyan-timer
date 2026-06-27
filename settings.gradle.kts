@@ -1,9 +1,11 @@
 pluginManagement {
     repositories {
-        // 国内镜像优先(加速),官方源兜底
-        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        // 本地用国内镜像加速;CI(GitHub Actions 带 CI=true)上阿里云镜像不稳(502),跳过只用官方源
+        if (System.getenv("CI") == null) {
+            maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/public") }
+        }
         google {
             content {
                 includeGroupByRegex("com\\.android.*")
@@ -19,8 +21,11 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        // 同上:CI 上跳过阿里云镜像,避免 502 导致构建失败
+        if (System.getenv("CI") == null) {
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/public") }
+        }
         google()
         mavenCentral()
     }
