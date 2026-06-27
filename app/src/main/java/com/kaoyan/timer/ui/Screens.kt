@@ -257,8 +257,12 @@ private fun MiniStatusBar(vm: KaoyanViewModel, state: AppState, now: Long, onExp
     val pomoText = if (pomo == null) {
         "番茄 · 待开始"
     } else {
-        val remain = ((pomo.endsAt - now) / 1000L).coerceAtLeast(0L)
-        val label = if (pomo.phase == "break") "休息中" else "专注中"
+        val remain = vm.pomoRemainSec(now)
+        val label = when {
+            pomo.pausedAt != null -> "已暂停"
+            pomo.phase == "break" -> "休息中"
+            else -> "专注中"
+        }
         "番茄 · $label ${mmss(remain)} · 点按全屏"
     }
     SectionCard(modifier = if (running) Modifier.clickable { onExpand() } else Modifier) {
@@ -292,11 +296,16 @@ fun FocusModeScreen(
 ) {
     val pomo = state.pomo ?: return
     val isBreak = pomo.phase == "break"
-    val remain = ((pomo.endsAt - now) / 1000L).coerceAtLeast(0L)
+    val paused = pomo.pausedAt != null
+    val remain = vm.pomoRemainSec(now)
     val total = ((pomo.endsAt - pomo.startAt) / 1000L).coerceAtLeast(1L)
     val progress = 1f - remain.toFloat() / total.toFloat()
     val ringColor = if (isBreak) ColorAccent2 else ColorGood
-    val phaseLabel = if (isBreak) "休息中" else "专注中"
+    val phaseLabel = when {
+        paused -> "已暂停"
+        isBreak -> "休息中"
+        else -> "专注中"
+    }
     val todayH = vm.todaySeconds(now) / 3600.0
     val subjectLabel = remember(state.subjects, pomo.itemId) {
         state.subjects.flatMap { s -> s.items.map { s.name to it } }
@@ -343,6 +352,14 @@ fun FocusModeScreen(
 
             Text("今日已投入 ${"%.1f".format(todayH)} 小时", color = ColorMuted, fontSize = 13.sp)
             Spacer(Modifier.height(16.dp))
+            Button(
+                onClick = { if (paused) vm.resumePomo() else vm.pausePomo() },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = ColorGood, contentColor = ColorBg)
+            ) {
+                Text(if (paused) "继续 ▶" else "暂停 ❚❚", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.height(10.dp))
             OutlinedButton(
                 onClick = onStop,
                 modifier = Modifier.fillMaxWidth().height(52.dp)

@@ -21,7 +21,8 @@ data class Pomo(
     val itemId: String,
     val phase: String, // "focus" | "break"
     val startAt: Long,
-    val endsAt: Long
+    val endsAt: Long,
+    val pausedAt: Long? = null // 非空=暂停,剩余时间冻结在该时刻
 )
 
 @Serializable

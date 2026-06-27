@@ -81,7 +81,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             startDate = src.startDate,
             subjects = newSubjects,
             daily = HashMap(src.daily),
-            pomo = src.pomo?.let { Pomo(it.itemId, it.phase, it.startAt, it.endsAt) },
+            pomo = src.pomo?.let { Pomo(it.itemId, it.phase, it.startAt, it.endsAt, it.pausedAt) },
             focusMin = src.focusMin,
             breakMin = src.breakMin,
             template = src.template,
@@ -182,8 +182,45 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         publish(s)
     }
 
+    fun pausePomo() {
+        val cur = _state.value.pomo ?: return
+        if (cur.pausedAt != null) return
+        val s = copyState(_state.value)
+        val now = System.currentTimeMillis()
+        s.pomo = s.pomo?.copy(pausedAt = minOf(now, cur.endsAt))
+        publish(s)
+    }
+
+    fun resumePomo() {
+        val cur = _state.value.pomo ?: return
+        val pausedAt = cur.pausedAt ?: return
+        val s = copyState(_state.value)
+        val now = System.currentTimeMillis()
+        val delta = now - pausedAt
+        s.pomo = s.pomo?.copy(
+            startAt = cur.startAt + delta,
+            endsAt = cur.endsAt + delta,
+            pausedAt = null
+        )
+        publish(s)
+    }
+
     fun stopPomo() {
         val s = copyState(_state.value)
+        val p = s.pomo
+        if (p != null && p.phase == "focus") {
+            // 中途停止也结算已专注时间(暂停时取冻结点),避免白干
+            val now = System.currentTimeMillis()
+            val end = p.pausedAt ?: minOf(now, p.endsAt)
+            val elapsed = (end - p.startAt) / 1000.0
+            if (elapsed > 0) {
+                val item = s.subjects.flatMap { it.items }.firstOrNull { it.id == p.itemId }
+                if (item != null) {
+                    item.seconds += elapsed
+                    addDaily(s, TimeUtil.todayKey(end), elapsed)
+                }
+            }
+        }
         s.pomo = null
         publish(s)
     }
@@ -217,6 +254,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------
     private fun tickPomo(now: Long) {
         val pomo = _state.value.pomo ?: return
+        if (pomo.pausedAt != null) return // 暂停中不推进,否则墙钟越过 endsAt 会误结算
         if (now < pomo.endsAt) return
 
         val s = copyState(_state.value)
@@ -249,6 +287,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     /** init 里:若 pomo 且 now>=endsAt,focus 补记一次后清空。 */
     private fun reconcile() {
         val pomo = _state.value.pomo ?: return
+        if (pomo.pausedAt != null) return // 重启后保持暂停态,不结算
         val now = System.currentTimeMillis()
         if (now < pomo.endsAt) return
 
@@ -290,11 +329,18 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         }
         val pomo = s.pomo
         if (pomo != null && pomo.phase == "focus") {
-            val cappedNow = minOf(now, pomo.endsAt)
+            val cappedNow = pomo.pausedAt ?: minOf(now, pomo.endsAt)
             val elapsed = (cappedNow - pomo.startAt) / 1000.0
             if (elapsed > 0) extra += elapsed
         }
         return extra
+    }
+
+    /** 番茄剩余秒数;暂停时以冻结点计,供两个 UI 复用。 */
+    fun pomoRemainSec(now: Long): Long {
+        val p = _state.value.pomo ?: return 0L
+        val ref = p.pausedAt ?: now
+        return ((p.endsAt - ref) / 1000L).coerceAtLeast(0L)
     }
 
     fun todaySeconds(now: Long): Double {

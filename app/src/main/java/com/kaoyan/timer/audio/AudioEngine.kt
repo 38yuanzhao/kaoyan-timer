@@ -21,8 +21,9 @@ class AudioEngine(private val context: Context) {
 
     private val sampleRate = 44100
 
-    // ---- 噪音相关:MediaPlayer 循环播放 res/raw 录音 ----
-    private var noisePlayer: MediaPlayer? = null
+    // ---- 噪音相关:双 MediaPlayer setNextMediaPlayer 接力,无缝循环 ----
+    private var noisePlayer: MediaPlayer? = null   // 当前在放
+    private var noiseNext: MediaPlayer? = null     // 已就绪的下一段(接力,消除循环空档)
     @Volatile private var currentNoiseType: String? = null
     private var volume: Float = 1.0f
 
@@ -149,8 +150,9 @@ class AudioEngine(private val context: Context) {
                 return
             }
             if (type == currentNoiseType && noisePlayer != null) {
-                // 类型未变,仅更新音量
+                // 类型未变,仅更新音量(当前段 + 已就绪的接力段都要更新)
                 noisePlayer?.let { safeSetVolume(it, volume) }
+                noiseNext?.let { safeSetVolume(it, volume) }
                 return
             }
             // 切换类型:先停旧的,再启动新的
@@ -164,6 +166,7 @@ class AudioEngine(private val context: Context) {
         synchronized(lock) {
             volume = vol.coerceIn(0f, 1f)
             noisePlayer?.let { safeSetVolume(it, volume) }
+            noiseNext?.let { safeSetVolume(it, volume) }
         }
     }
 
@@ -180,21 +183,52 @@ class AudioEngine(private val context: Context) {
         try {
             // create() 会同步 prepare;本地小文件很快
             val mp = MediaPlayer.create(context, resId) ?: return
-            mp.isLooping = true
             safeSetVolume(mp, volume)
-            mp.start()
             noisePlayer = mp
+            prepareNextLocked(resId) // 预排下一段做无缝接力(不用 isLooping,它在循环点有空档)
+            mp.start()
         } catch (_: Throwable) {
             // 创建/播放失败:忽略,保证不崩
         }
     }
 
+    /** 给当前段排一个就绪的后继并 setNextMediaPlayer;当前段播完自动无缝切到后继,再续排下一段。 */
+    private fun prepareNextLocked(resId: Int) {
+        val cur = noisePlayer ?: return
+        val nxt = try { MediaPlayer.create(context, resId) } catch (_: Throwable) { null } ?: return
+        safeSetVolume(nxt, volume)
+        noiseNext = nxt
+        try { cur.setNextMediaPlayer(nxt) } catch (_: Throwable) {}
+        cur.setOnCompletionListener { done ->
+            synchronized(lock) {
+                if (done !== noisePlayer) return@synchronized // 已被停止/切换,忽略
+                try { done.release() } catch (_: Throwable) {}
+                // 后继已由系统自动开始播放,提升为当前段
+                noisePlayer = noiseNext
+                noiseNext = null
+                val t = currentNoiseType
+                if (t != null && noisePlayer != null && resFor(t) == resId) {
+                    prepareNextLocked(resId) // 继续接力
+                } else {
+                    stopNoiseLocked() // 期间被停/切了:收掉刚提升的这段
+                }
+            }
+        }
+    }
+
     private fun stopNoiseLocked() {
         val mp = noisePlayer
+        val nx = noiseNext
         noisePlayer = null
+        noiseNext = null
         if (mp != null) {
+            try { mp.setOnCompletionListener(null) } catch (_: Throwable) {}
             try { mp.stop() } catch (_: Throwable) {}
             try { mp.release() } catch (_: Throwable) {}
+        }
+        if (nx != null) {
+            try { nx.stop() } catch (_: Throwable) {}
+            try { nx.release() } catch (_: Throwable) {}
         }
     }
 

@@ -1,6 +1,6 @@
 package com.kaoyan.timer.ui
 
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenuItem
@@ -58,13 +59,14 @@ fun PomodoroCard(
         selectedId = state.pomo?.itemId
     }
     var expanded by remember { mutableStateOf(false) }
-    var showSettings by remember { mutableStateOf(false) }
+    var showDurationDialog by remember { mutableStateOf(false) }
 
     val selectedLabel = options.firstOrNull { it.id == selectedId }?.label ?: "选择子项"
 
     val isBreak = state.pomo?.phase == "break"
+    val paused = state.pomo?.pausedAt != null
     val remainSec: Long = if (pomoRunning) {
-        ((state.pomo!!.endsAt - now) / 1000L).coerceAtLeast(0L)
+        vm.pomoRemainSec(now)
     } else {
         state.focusMin.toLong() * 60L
     }
@@ -75,10 +77,11 @@ fun PomodoroCard(
     }
     val progress = if (pomoRunning) 1f - remainSec.toFloat() / totalSec.toFloat() else 0f
     val ringColor = if (isBreak) ColorAccent2 else ColorGood
-    val phaseLabel = when (state.pomo?.phase) {
-        "focus" -> "专注中"
-        "break" -> "休息中"
-        else -> "待开始"
+    val phaseLabel = when {
+        paused -> "已暂停"
+        state.pomo?.phase == "focus" -> "专注中"
+        state.pomo?.phase == "break" -> "休息中"
+        else -> "待开始 · 点击数字改时长"
     }
 
     val runningBg = if (state.pomo?.phase == "focus") ColorGoodContainer else ColorCard
@@ -124,7 +127,12 @@ fun PomodoroCard(
         BoxWithConstraints(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             val ringD = if (maxWidth < 260.dp) maxWidth else 260.dp
             val fs = ringD.value * 0.205f
-            Box(modifier = Modifier.size(ringD), contentAlignment = Alignment.Center) {
+            val centerModifier = if (!pomoRunning) {
+                Modifier.size(ringD).clickable { showDurationDialog = true }
+            } else {
+                Modifier.size(ringD)
+            }
+            Box(modifier = centerModifier, contentAlignment = Alignment.Center) {
                 RingProgress(
                     progress = progress,
                     color = ringColor,
@@ -145,38 +153,6 @@ fun PomodoroCard(
         Spacer(Modifier.height(16.dp))
 
         if (!pomoRunning) {
-            TextButton(onClick = { showSettings = !showSettings }) {
-                Text(
-                    "⚙ 时长  专注 ${state.focusMin} / 休息 ${state.breakMin} 分",
-                    color = ColorMuted,
-                    fontSize = 13.sp
-                )
-            }
-            AnimatedVisibility(visible = showSettings) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    WheelMinutePicker(
-                        label = "专注(分)",
-                        value = state.focusMin,
-                        range = 1..180,
-                        enabled = true,
-                        onChange = { vm.setFocusMin(it) },
-                        modifier = Modifier.weight(1f)
-                    )
-                    WheelMinutePicker(
-                        label = "休息(分)",
-                        value = state.breakMin,
-                        range = 1..60,
-                        enabled = true,
-                        onChange = { vm.setBreakMin(it) },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-            Spacer(Modifier.height(12.dp))
             Button(
                 onClick = { selectedId?.let { vm.startPomo(it) } },
                 enabled = selectedId != null,
@@ -187,14 +163,82 @@ fun PomodoroCard(
                 )
             ) { Text("开始 ▶", fontWeight = FontWeight.SemiBold) }
         } else {
-            Button(
-                onClick = { vm.stopPomo() },
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = ColorAccent,
-                    contentColor = ColorBg
-                )
-            ) { Text("停止", fontWeight = FontWeight.SemiBold) }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Button(
+                    onClick = { if (paused) vm.resumePomo() else vm.pausePomo() },
+                    modifier = Modifier.weight(1f).height(52.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ColorGood,
+                        contentColor = ColorBg
+                    )
+                ) { Text(if (paused) "继续 ▶" else "暂停 ❚❚", fontWeight = FontWeight.SemiBold) }
+                Button(
+                    onClick = { vm.stopPomo() },
+                    modifier = Modifier.weight(1f).height(52.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ColorAccent,
+                        contentColor = ColorBg
+                    )
+                ) { Text("停止", fontWeight = FontWeight.SemiBold) }
+            }
         }
     }
+
+    if (showDurationDialog) {
+        PomoDurationDialog(
+            focusMin = state.focusMin,
+            breakMin = state.breakMin,
+            onFocusChange = { vm.setFocusMin(it) },
+            onBreakChange = { vm.setBreakMin(it) },
+            onDismiss = { showDurationDialog = false }
+        )
+    }
+}
+
+/** 点番茄大数字弹出:用与设置页同款滚轮调专注/休息时长,实时生效。 */
+@Composable
+private fun PomoDurationDialog(
+    focusMin: Int,
+    breakMin: Int,
+    onFocusChange: (Int) -> Unit,
+    onBreakChange: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("番茄时长", color = ColorFg) },
+        text = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                WheelMinutePicker(
+                    label = "专注(分)",
+                    value = focusMin,
+                    range = 1..180,
+                    enabled = true,
+                    onChange = onFocusChange,
+                    modifier = Modifier.weight(1f)
+                )
+                WheelMinutePicker(
+                    label = "休息(分)",
+                    value = breakMin,
+                    range = 1..60,
+                    enabled = true,
+                    onChange = onBreakChange,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("完成", color = ColorGood) }
+        },
+        containerColor = ColorCard2,
+        titleContentColor = ColorFg,
+        textContentColor = ColorFg
+    )
 }
