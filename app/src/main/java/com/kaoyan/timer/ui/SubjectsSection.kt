@@ -228,8 +228,9 @@ private fun SubjectCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Button(
+                // 与番茄互斥:番茄在跑时禁开秒表(此项在跑则仍可暂停)
                 onClick = { current?.let { vm.toggleItem(it.id) } },
-                enabled = current != null,
+                enabled = current != null && (running || state.pomo == null),
                 modifier = Modifier.weight(1f).height(48.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (running) ColorAccent else ColorGood,

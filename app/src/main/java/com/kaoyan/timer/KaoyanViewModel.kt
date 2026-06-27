@@ -9,8 +9,11 @@ import com.kaoyan.timer.model.AppState
 import com.kaoyan.timer.model.Item
 import com.kaoyan.timer.model.Pomo
 import com.kaoyan.timer.model.Subject
+import com.kaoyan.timer.model.Subtask
 import com.kaoyan.timer.model.Templates
+import com.kaoyan.timer.service.PomodoroService
 import com.kaoyan.timer.util.TimeUtil
+import com.kaoyan.timer.util.mmss
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -18,6 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import kotlin.math.ceil
+import kotlin.math.roundToInt
 
 class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -33,6 +37,9 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     // itemId -> Item 的索引,结构变化后重建
     private var itemById: Map<String, Item> = buildIndex(_state.value)
 
+    // 前台服务是否已开,避免每秒重复 startForegroundService
+    private var pomoServiceOn = false
+
     init {
         reconcile()
         viewModelScope.launch {
@@ -40,8 +47,42 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
                 val n = System.currentTimeMillis()
                 _now.value = n
                 tickPomo(n)
+                syncPomoNotification(n)
                 delay(1000)
             }
+        }
+    }
+
+    /** 番茄在跑就开/更新前台服务通知,停了就关。计时仍由本 ViewModel 驱动,服务只保活。 */
+    private fun syncPomoNotification(now: Long) {
+        val app = getApplication<Application>()
+        val p = _state.value.pomo
+        if (p == null) {
+            if (pomoServiceOn) {
+                PomodoroService.stop(app)
+                pomoServiceOn = false
+            }
+            return
+        }
+        val item = findItem(_state.value, p.itemId)
+        val title = if (item != null) "${subjectNameOf(_state.value, p.itemId)} · ${item.name}" else "番茄专注"
+        val phase = when {
+            p.pausedAt != null -> "已暂停"
+            p.phase == "overtime" -> "超时中"
+            p.phase == "break" -> "休息中"
+            else -> "专注中"
+        }
+        val timeText = if (p.phase == "overtime") "+" + mmss(pomoOvertimeSec(now)) else mmss(pomoRemainSec(now))
+        val chain = if (p.subtaskId != null && item != null) {
+            val idx = item.subtasks.indexOfFirst { it.id == p.subtaskId }
+            if (idx >= 0) " · 第 ${idx + 1}/${item.subtasks.size}" else ""
+        } else ""
+        val text = "$phase $timeText$chain"
+        if (!pomoServiceOn) {
+            PomodoroService.start(app, title, text)
+            pomoServiceOn = true
+        } else {
+            PomodoroService.update(app, title, text)
         }
     }
 
@@ -71,7 +112,8 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
                         id = it.id,
                         name = it.name,
                         seconds = it.seconds,
-                        runningSince = it.runningSince
+                        runningSince = it.runningSince,
+                        subtasks = it.subtasks.map { st -> st.copy() } // 深拷贝:Subtask.done 可变,必须新实例
                     )
                 }
             )
@@ -82,7 +124,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             subjects = newSubjects,
             daily = HashMap(src.daily),
             dailySub = HashMap(src.dailySub.mapValues { HashMap(it.value) }),
-            pomo = src.pomo?.let { Pomo(it.itemId, it.phase, it.startAt, it.endsAt, it.pausedAt) },
+            pomo = src.pomo?.let { Pomo(it.itemId, it.phase, it.startAt, it.endsAt, it.pausedAt, it.subtaskId) },
             focusMin = src.focusMin,
             breakMin = src.breakMin,
             template = src.template,
@@ -103,6 +145,26 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     /** 找 itemId 所属科目名,用于按科记账。 */
     private fun subjectNameOf(s: AppState, itemId: String): String =
         s.subjects.firstOrNull { sub -> sub.items.any { it.id == itemId } }?.name ?: ""
+
+    private fun findItem(s: AppState, itemId: String): Item? =
+        s.subjects.flatMap { it.items }.firstOrNull { it.id == itemId }
+
+    /** 拆解链里下一个未完成的小任务(按列表顺序)。 */
+    private fun nextUndoneSubtask(item: Item): Subtask? =
+        item.subtasks.firstOrNull { !it.done }
+
+    /** 开番茄前调用:把所有在跑的子项秒表结算并清零,实现与番茄互斥,避免同段双记。 */
+    private fun settleAllRunning(s: AppState, now: Long) {
+        for (sub in s.subjects) for (it in sub.items) {
+            val rs = it.runningSince ?: continue
+            val elapsed = (now - rs) / 1000.0
+            if (elapsed > 0) {
+                it.seconds += elapsed
+                addDaily(s, TimeUtil.todayKey(now), elapsed, sub.name)
+            }
+            it.runningSince = null
+        }
+    }
 
     // ---------------------------------------------------------------
     // 动作
@@ -157,6 +219,14 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         publish(s)
     }
 
+    /** 保存某子项的小任务清单(拆解面板编辑后调用),不启动番茄。运行态不应调用。 */
+    fun saveSubtasks(itemId: String, subtasks: List<Subtask>) {
+        val s = copyState(_state.value)
+        val item = findItem(s, itemId) ?: return
+        item.subtasks = subtasks.map { it.copy() }
+        publish(s)
+    }
+
     fun selectSubItem(subjectName: String, itemId: String) {
         val s = copyState(_state.value)
         val now = System.currentTimeMillis()
@@ -182,6 +252,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     fun startPomo(itemId: String) {
         val s = copyState(_state.value)
         val now = System.currentTimeMillis()
+        settleAllRunning(s, now) // 与子项秒表互斥
         val focusMs = s.focusMin.toLong() * 60_000L
         s.pomo = Pomo(
             itemId = itemId,
@@ -192,12 +263,72 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         publish(s)
     }
 
+    /**
+     * 开始一条拆解链:跑该 item 第一个未完成的小任务(按它自己的 estMin 当 focus 时长)。
+     * 全部已完成则把整条链重置后从头开始。与子项秒表互斥。
+     */
+    fun startSubtaskChain(itemId: String) {
+        val s = copyState(_state.value)
+        val now = System.currentTimeMillis()
+        settleAllRunning(s, now)
+        val item = findItem(s, itemId) ?: return
+        if (item.subtasks.isEmpty()) return
+        // 防御:一次性流程正常不会留全完成的链;万一有(旧数据/边角)就重置重跑,避免空转死角
+        if (item.subtasks.all { it.done }) item.subtasks.forEach { it.done = false }
+        val st = nextUndoneSubtask(item) ?: return
+        val focusMs = st.estMin.toLong() * 60_000L
+        s.pomo = Pomo(
+            itemId = item.id,
+            phase = "focus",
+            startAt = now,
+            endsAt = now + focusMs,
+            subtaskId = st.id
+        )
+        publish(s)
+    }
+
+    /**
+     * 清单条手动打勾。若正专注这一段=立即结算已流逝并接力下一个(与到期 tick 幂等);
+     * 否则仅标记完成,接力时自动跳过。
+     */
+    fun markSubtaskDone(itemId: String, subtaskId: String) {
+        val s = copyState(_state.value)
+        val now = System.currentTimeMillis()
+        val item = findItem(s, itemId) ?: return
+        val st = item.subtasks.firstOrNull { it.id == subtaskId } ?: return
+        val p = s.pomo
+        if (p != null && p.subtaskId == subtaskId && (p.phase == "focus" || p.phase == "overtime")) {
+            // 结算已专注(含超时):focus 封顶到 endsAt;overtime 算到 now
+            val end = p.pausedAt ?: if (p.phase == "overtime") now else minOf(now, p.endsAt)
+            val elapsed = (end - p.startAt) / 1000.0
+            if (elapsed > 0) {
+                item.seconds += elapsed
+                addDaily(s, TimeUtil.todayKey(end), elapsed, subjectNameOf(s, itemId))
+            }
+            st.done = true
+            val next = nextUndoneSubtask(item)
+            if (next != null) {
+                // 完成本段 → 进休息(专注时长 20%),休息完自动接力下一个
+                val breakMin = (elapsed / 60.0 * 0.2).roundToInt().coerceIn(3, 20)
+                s.pomo = Pomo(itemId, "break", now, now + breakMin.toLong() * 60_000L, subtaskId = subtaskId)
+            } else {
+                item.subtasks = emptyList() // 一次性:最后一个完成即清空整条链
+                s.pomo = null
+            }
+        } else {
+            st.done = true
+        }
+        publish(s)
+    }
+
     fun pausePomo() {
         val cur = _state.value.pomo ?: return
         if (cur.pausedAt != null) return
         val s = copyState(_state.value)
         val now = System.currentTimeMillis()
-        s.pomo = s.pomo?.copy(pausedAt = minOf(now, cur.endsAt))
+        // 超时正计时无 endsAt 上限,冻结在 now;focus/break 封顶到 endsAt
+        val freeze = if (cur.phase == "overtime") now else minOf(now, cur.endsAt)
+        s.pomo = s.pomo?.copy(pausedAt = freeze)
         publish(s)
     }
 
@@ -218,19 +349,20 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     fun stopPomo() {
         val s = copyState(_state.value)
         val p = s.pomo
-        if (p != null && p.phase == "focus") {
-            // 中途停止也结算已专注时间(暂停时取冻结点),避免白干
+        if (p != null && (p.phase == "focus" || p.phase == "overtime")) {
+            // 中途停止也结算已专注时间(含超时;暂停时取冻结点),避免白干
             val now = System.currentTimeMillis()
-            val end = p.pausedAt ?: minOf(now, p.endsAt)
+            val end = p.pausedAt ?: if (p.phase == "overtime") now else minOf(now, p.endsAt)
             val elapsed = (end - p.startAt) / 1000.0
             if (elapsed > 0) {
-                val item = s.subjects.flatMap { it.items }.firstOrNull { it.id == p.itemId }
+                val item = findItem(s, p.itemId)
                 if (item != null) {
                     item.seconds += elapsed
                     addDaily(s, TimeUtil.todayKey(end), elapsed, subjectNameOf(s, p.itemId))
                 }
             }
         }
+        // 停止=正常停止:保留拆解链(含已完成进度),下次可继续;只有整条链跑完才清空
         s.pomo = null
         publish(s)
     }
@@ -265,31 +397,52 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     private fun tickPomo(now: Long) {
         val pomo = _state.value.pomo ?: return
         if (pomo.pausedAt != null) return // 暂停中不推进,否则墙钟越过 endsAt 会误结算
+        if (pomo.phase == "overtime") return // 超时正计时:不自动结算/推进,等用户点完成
         if (now < pomo.endsAt) return
 
         val s = copyState(_state.value)
         val p = s.pomo ?: return
         if (p.phase == "focus") {
-            // 结算 focus 到 item + daily
-            val item = s.subjects.flatMap { it.items }.firstOrNull { it.id == p.itemId }
-            val focusSecs = (p.endsAt - p.startAt) / 1000.0
-            if (item != null && focusSecs > 0) {
-                item.seconds += focusSecs
-                addDaily(s, TimeUtil.todayKey(p.endsAt), focusSecs, subjectNameOf(s, p.itemId))
+            if (p.subtaskId != null) {
+                // 拆解链:预估时间到 → 转超时正计时(不结算、不标完成),响铃提示
+                audio.beep()
+                s.pomo = Pomo(
+                    itemId = p.itemId,
+                    phase = "overtime",
+                    startAt = p.startAt, // 保留原起点,完成时按 now-startAt 结算总时长
+                    endsAt = p.endsAt,   // 预估到点时刻,用于显示超时 +mm:ss
+                    subtaskId = p.subtaskId
+                )
+            } else {
+                // 普通番茄:结算 focus → 休息
+                val item = findItem(s, p.itemId)
+                val focusSecs = (p.endsAt - p.startAt) / 1000.0
+                if (item != null && focusSecs > 0) {
+                    item.seconds += focusSecs
+                    addDaily(s, TimeUtil.todayKey(p.endsAt), focusSecs, subjectNameOf(s, p.itemId))
+                }
+                audio.beep()
+                val breakMs = s.breakMin.toLong() * 60_000L
+                s.pomo = Pomo(p.itemId, "break", p.endsAt, p.endsAt + breakMs)
             }
-            audio.beep()
-            // 转 break
-            val breakMs = s.breakMin.toLong() * 60_000L
-            s.pomo = Pomo(
-                itemId = p.itemId,
-                phase = "break",
-                startAt = p.endsAt,
-                endsAt = p.endsAt + breakMs
-            )
         } else {
-            // break 结束
+            // break 结束 → 自动接力下一个未完成小任务
             audio.beep()
-            s.pomo = null
+            val item = if (p.subtaskId != null) findItem(s, p.itemId) else null
+            val next = item?.let { nextUndoneSubtask(it) }
+            if (next != null) {
+                s.pomo = Pomo(
+                    itemId = p.itemId,
+                    phase = "focus",
+                    startAt = now,
+                    endsAt = now + next.estMin.toLong() * 60_000L,
+                    subtaskId = next.id
+                )
+            } else {
+                // 一次性:整条链跑完即清空小任务,下次需重新拆解
+                if (item != null) item.subtasks = emptyList()
+                s.pomo = null
+            }
         }
         publish(s)
     }
@@ -299,18 +452,20 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         val pomo = _state.value.pomo ?: return
         if (pomo.pausedAt != null) return // 重启后保持暂停态,不结算
         val now = System.currentTimeMillis()
-        if (now < pomo.endsAt) return
+        if (pomo.phase != "overtime" && now < pomo.endsAt) return
 
         val s = copyState(_state.value)
         val p = s.pomo ?: return
-        if (p.phase == "focus") {
-            val item = s.subjects.flatMap { it.items }.firstOrNull { it.id == p.itemId }
+        if (p.phase == "focus" || p.phase == "overtime") {
+            // 安全降级:overtime 无法知道实际跑多久,只补记到预估到点(endsAt);不标完成。
+            val item = findItem(s, p.itemId)
             val focusSecs = (p.endsAt - p.startAt) / 1000.0
             if (item != null && focusSecs > 0) {
                 item.seconds += focusSecs
                 addDaily(s, TimeUtil.todayKey(p.endsAt), focusSecs, subjectNameOf(s, p.itemId))
             }
         }
+        // 不重放后续链、不标完成、不清空拆解:链保留,重开后从清单条继续下一个未完成的小任务。
         s.pomo = null
         publish(s)
     }
@@ -390,6 +545,16 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         val p = _state.value.pomo ?: return 0L
         val ref = p.pausedAt ?: now
         return ((p.endsAt - ref) / 1000L).coerceAtLeast(0L)
+    }
+
+    fun pomoIsOvertime(): Boolean = _state.value.pomo?.phase == "overtime"
+
+    /** 超时正计时已超出的秒数(now − 预估到点);暂停时取冻结点。 */
+    fun pomoOvertimeSec(now: Long): Long {
+        val p = _state.value.pomo ?: return 0L
+        if (p.phase != "overtime") return 0L
+        val ref = p.pausedAt ?: now
+        return ((ref - p.endsAt) / 1000L).coerceAtLeast(0L)
     }
 
     fun todaySeconds(now: Long): Double {
@@ -479,5 +644,9 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         super.onCleared()
         audio.release()
+        if (pomoServiceOn) {
+            PomodoroService.stop(getApplication())
+            pomoServiceOn = false
+        }
     }
 }

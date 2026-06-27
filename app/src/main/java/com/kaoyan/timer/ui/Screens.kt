@@ -257,13 +257,20 @@ private fun MiniStatusBar(vm: KaoyanViewModel, state: AppState, now: Long, onExp
     val pomoText = if (pomo == null) {
         "番茄 · 待开始"
     } else {
-        val remain = vm.pomoRemainSec(now)
+        val overtime = pomo.phase == "overtime"
         val label = when {
             pomo.pausedAt != null -> "已暂停"
+            overtime -> "超时中"
             pomo.phase == "break" -> "休息中"
             else -> "专注中"
         }
-        "番茄 · $label ${mmss(remain)} · 点按全屏"
+        val timeText = if (overtime) "+" + mmss(vm.pomoOvertimeSec(now)) else mmss(vm.pomoRemainSec(now))
+        val chainSuffix = if (pomo.subtaskId != null) {
+            val subs = state.subjects.flatMap { it.items }.firstOrNull { it.id == pomo.itemId }?.subtasks ?: emptyList()
+            val idx = subs.indexOfFirst { it.id == pomo.subtaskId }
+            if (idx >= 0) " · 第 ${idx + 1}/${subs.size}" else ""
+        } else ""
+        "番茄 · $label $timeText$chainSuffix · 点按全屏"
     }
     SectionCard(modifier = if (running) Modifier.clickable { onExpand() } else Modifier) {
         Row(
@@ -296,6 +303,7 @@ fun FocusModeScreen(
 ) {
     val pomo = state.pomo ?: return
     val isBreak = pomo.phase == "break"
+    val isOvertime = pomo.phase == "overtime"
     val paused = pomo.pausedAt != null
     val remain = vm.pomoRemainSec(now)
     val total = ((pomo.endsAt - pomo.startAt) / 1000L).coerceAtLeast(1L)
@@ -303,6 +311,7 @@ fun FocusModeScreen(
     val ringColor = if (isBreak) ColorAccent2 else ColorGood
     val phaseLabel = when {
         paused -> "已暂停"
+        isOvertime -> "超时中"
         isBreak -> "休息中"
         else -> "专注中"
     }
@@ -311,6 +320,9 @@ fun FocusModeScreen(
         state.subjects.flatMap { s -> s.items.map { s.name to it } }
             .firstOrNull { it.second.id == pomo.itemId }
             ?.let { "${it.first} · ${it.second.name}" } ?: "专注"
+    }
+    val chainItem = remember(state.subjects, pomo.itemId) {
+        state.subjects.flatMap { s -> s.items }.firstOrNull { it.id == pomo.itemId }
     }
 
     Surface(modifier = Modifier.fillMaxSize(), color = ColorBg) {
@@ -333,8 +345,19 @@ fun FocusModeScreen(
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(subjectLabel, color = ColorMuted, fontSize = 15.sp)
+                if (pomo.subtaskId != null && chainItem != null) {
+                    val subs = chainItem.subtasks
+                    val idx = subs.indexOfFirst { it.id == pomo.subtaskId }
+                    subs.getOrNull(idx)?.let { cur ->
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "${cur.name} · 第 ${idx + 1}/${subs.size}",
+                            color = ColorFg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
                 Spacer(Modifier.height(30.dp))
-                val timeStr = mmss(remain)
+                val timeStr = if (isOvertime) "+" + mmss(vm.pomoOvertimeSec(now)) else mmss(remain)
                 BoxWithConstraints(contentAlignment = Alignment.Center) {
                     // 整屏:环铺满可用宽(上限 360dp),字号随环径走,180:00 也留足余量
                     val ringD = minOf(maxWidth, maxHeight, 360.dp)
@@ -350,14 +373,31 @@ fun FocusModeScreen(
                 }
             }
 
+            if (pomo.subtaskId != null && chainItem != null) {
+                ChainChecklist(vm, chainItem, pomo, modifier = Modifier.padding(horizontal = 8.dp))
+                Spacer(Modifier.height(14.dp))
+            }
             Text("今日已投入 ${"%.1f".format(todayH)} 小时", color = ColorMuted, fontSize = 13.sp)
             Spacer(Modifier.height(16.dp))
-            Button(
-                onClick = { if (paused) vm.resumePomo() else vm.pausePomo() },
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = ColorGood, contentColor = ColorBg)
-            ) {
-                Text(if (paused) "继续 ▶" else "暂停 ❚❚", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            val chainSub = pomo.subtaskId
+            if (chainSub != null && chainItem != null && !isBreak) {
+                // 拆解链 focus/超时态:主操作「完成本段」,暂停降为描边
+                Button(
+                    onClick = { vm.markSubtaskDone(chainItem.id, chainSub) },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = ColorGood, contentColor = ColorBg)
+                ) { Text("完成本段 ✓", fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = { if (paused) vm.resumePomo() else vm.pausePomo() },
+                    modifier = Modifier.fillMaxWidth().height(52.dp)
+                ) { Text(if (paused) "继续 ▶" else "暂停 ❚❚", color = ColorGood, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
+            } else {
+                Button(
+                    onClick = { if (paused) vm.resumePomo() else vm.pausePomo() },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = ColorGood, contentColor = ColorBg)
+                ) { Text(if (paused) "继续 ▶" else "暂停 ❚❚", fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
             }
             Spacer(Modifier.height(10.dp))
             OutlinedButton(

@@ -3,11 +3,20 @@ package com.kaoyan.timer.model
 import kotlinx.serialization.Serializable
 
 @Serializable
+data class Subtask(
+    val id: String,
+    val name: String,
+    val estMin: Int,        // 预估专注时长(分),= 这一段实际跑的 focus 时长
+    var done: Boolean = false
+)
+
+@Serializable
 data class Item(
     val id: String,
     val name: String,
     var seconds: Double = 0.0,
-    var runningSince: Long? = null
+    var runningSince: Long? = null,
+    var subtasks: List<Subtask> = emptyList() // 拆解出的小任务;空=未拆解
 )
 
 @Serializable
@@ -22,7 +31,8 @@ data class Pomo(
     val phase: String, // "focus" | "break"
     val startAt: Long,
     val endsAt: Long,
-    val pausedAt: Long? = null // 非空=暂停,剩余时间冻结在该时刻
+    val pausedAt: Long? = null, // 非空=暂停,剩余时间冻结在该时刻
+    val subtaskId: String? = null // 非空=拆解链里的一段(决定休息按 20% 算 + 自动接力);空=直接开始的普通番茄
 )
 
 @Serializable
