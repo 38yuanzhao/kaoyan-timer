@@ -1,102 +1,102 @@
 package com.kaoyan.timer.ui
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Surface
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.kaoyan.timer.KaoyanViewModel
-import com.kaoyan.timer.audio.AudioEngine
+
+private data class TabItem(val label: String, val icon: ImageVector)
 
 @Composable
 fun KaoyanApp(vm: KaoyanViewModel) {
     val state by vm.state.collectAsState()
     val now by vm.now.collectAsState()
+    val audio = vm.audio
 
-    val context = LocalContext.current
-    val audio = remember { AudioEngine(context.applicationContext) }
-    DisposableEffect(Unit) {
-        onDispose { audio.release() }
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    // 噪音状态上提到顶层:切 tab / 重组都不丢
+    var noiseType by rememberSaveable { mutableStateOf<String?>(null) }
+    var volume by rememberSaveable { mutableFloatStateOf(0.5f) }
+
+    val tabs = listOf(
+        TabItem("仪表盘", Icons.Filled.Home),
+        TabItem("专注", Icons.Filled.PlayArrow),
+        TabItem("数据", Icons.Filled.DateRange),
+        TabItem("设置", Icons.Filled.Settings)
+    )
+
+    // 番茄运行时整屏接管;最小化可退回普通界面(计时不停)
+    val pomoActive = state.pomo != null
+    var pomoMinimized by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(pomoActive) { if (!pomoActive) pomoMinimized = false }
+    if (pomoActive && !pomoMinimized) {
+        FocusModeScreen(
+            vm, state, now,
+            onMinimize = { pomoMinimized = true },
+            onStop = { vm.stopPomo() }
+        )
+        return
     }
 
-    Surface(modifier = Modifier.fillMaxSize(), color = ColorBg) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing),
-            contentAlignment = Alignment.TopCenter
-        ) {
-            androidx.compose.foundation.layout.BoxWithConstraints(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                val twoCol = maxWidth >= 600.dp
-                val scroll = rememberScrollState()
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .widthIn(max = 920.dp)
-                        .verticalScroll(scroll)
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    if (twoCol) {
-                        // 顶部整宽倒计时
-                        CountdownCard(vm, state.examDate, now)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            // 左列
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(14.dp)
-                            ) {
-                                ProgressCard(vm, state.startDate, now)
-                                PomodoroCard(vm, state, now)
-                            }
-                            // 右列
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(14.dp)
-                            ) {
-                                TodayTotalRow(vm, state, now)
-                                SubjectsSection(vm, state, now)
-                                ChartCard(vm, now)
-                            }
-                        }
-                        NoiseBar(audio)
-                    } else {
-                        CountdownCard(vm, state.examDate, now)
-                        ProgressCard(vm, state.startDate, now)
-                        TodayTotalRow(vm, state, now)
-                        PomodoroCard(vm, state, now)
-                        SubjectsSection(vm, state, now)
-                        ChartCard(vm, now)
-                        NoiseBar(audio)
-                    }
-                    Spacer(Modifier.height(8.dp))
+    Scaffold(
+        containerColor = ColorBg,
+        bottomBar = {
+            NavigationBar(containerColor = ColorCard, tonalElevation = 0.dp) {
+                tabs.forEachIndexed { i, t ->
+                    NavigationBarItem(
+                        selected = selectedTab == i,
+                        onClick = { selectedTab = i },
+                        icon = { Icon(t.icon, contentDescription = t.label) },
+                        label = { Text(t.label) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = ColorGood,
+                            selectedTextColor = ColorGood,
+                            indicatorColor = ColorGoodContainer,
+                            unselectedIconColor = ColorMuted,
+                            unselectedTextColor = ColorMuted
+                        )
+                    )
                 }
+            }
+        }
+    ) { inner ->
+        Box(Modifier.fillMaxSize().padding(inner)) {
+            when (selectedTab) {
+                0 -> DashboardScreen(
+                    vm, state, now,
+                    onStartFocus = { selectedTab = 1 },
+                    onOpenData = { selectedTab = 2 }
+                )
+                1 -> FocusScreen(
+                    vm, state, now, audio, noiseType, volume,
+                    onNoiseChange = { t, v -> noiseType = t; volume = v },
+                    onExpandPomo = { pomoMinimized = false }
+                )
+                2 -> DataScreen(vm, state, now)
+                3 -> SettingsScreen(vm, state)
             }
         }
     }

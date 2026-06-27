@@ -18,6 +18,8 @@ import androidx.compose.ui.unit.sp
 import com.kaoyan.timer.KaoyanViewModel
 import androidx.compose.material3.Text
 
+private val PastBar = ColorMuted.copy(alpha = 0.40f)
+
 @Composable
 fun ChartCard(
     vm: KaoyanViewModel,
@@ -42,14 +44,12 @@ fun ChartCard(
                 .height(180.dp)
         ) {
             val n = bars.size.coerceAtLeast(1)
-            val labelTopPx = 22f      // 柱上小时数字区域
-            val labelBottomPx = 26f   // 柱下星期区域
+            // 预留区随屏幕密度缩放(标签 textSize 也是 *density),否则高密度屏柱顶/柱底标签被裁
+            val labelTopPx = 26f * density
+            val labelBottomPx = 30f * density
             val chartHeight = size.height - labelTopPx - labelBottomPx
             val slot = size.width / n
             val barWidth = slot * 0.5f
-
-            val accentColor = ColorAccent2
-            val goodColor = ColorGood
 
             bars.forEachIndexed { i, bar ->
                 val ratio = (bar.secs / maxSecs).toFloat().coerceIn(0f, 1f)
@@ -58,33 +58,55 @@ fun ChartCard(
                 val left = cx - barWidth / 2f
                 val top = labelTopPx + (chartHeight - barH)
 
-                val color: Color = if (bar.today) goodColor else accentColor
+                val color: Color = if (bar.today) ColorGood else PastBar
                 drawRoundedBar(left, top, barWidth, barH, color)
 
-                // 柱上小时数
                 val hours = bar.secs / 3600.0
                 if (hours > 0.0) {
                     drawNativeText(
                         "%.1f".format(hours),
                         cx,
-                        labelTopPx + (chartHeight - barH) - 6f,
+                        labelTopPx + (chartHeight - barH) - 6f * density,
                         ColorFg.toArgb(),
                         9f,
                         centerX = true
                     )
                 }
 
-                // 柱下星期
                 val label = if (bar.today) "今" else dowNames[bar.dow.coerceIn(0, 6)]
                 drawNativeText(
                     label,
                     cx,
-                    size.height - 6f,
+                    size.height - 7f * density,
                     (if (bar.today) ColorGood else ColorMuted).toArgb(),
                     11f,
                     centerX = true
                 )
             }
+        }
+    }
+}
+
+/** 仪表盘速览:7 根迷你柱,无数字无星期,今日绿色。整卡点击由调用方处理。 */
+@Composable
+fun MiniWeekStrip(
+    vm: KaoyanViewModel,
+    now: Long,
+    modifier: Modifier = Modifier
+) {
+    val bars = vm.last7(now)
+    val maxSecs = (bars.maxOfOrNull { it.secs } ?: 0.0).coerceAtLeast(1.0)
+    Canvas(modifier = modifier) {
+        val n = bars.size.coerceAtLeast(1)
+        val slot = size.width / n
+        val barWidth = slot * 0.46f
+        bars.forEachIndexed { i, bar ->
+            val ratio = (bar.secs / maxSecs).toFloat().coerceIn(0f, 1f)
+            val barH = (size.height * ratio).coerceAtLeast(3f)
+            val cx = slot * i + slot / 2f
+            val left = cx - barWidth / 2f
+            val top = size.height - barH
+            drawRoundedBar(left, top, barWidth, barH, if (bar.today) ColorGood else PastBar)
         }
     }
 }

@@ -16,7 +16,6 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,8 +32,9 @@ import com.kaoyan.timer.model.Item
 import com.kaoyan.timer.model.Subject
 import com.kaoyan.timer.util.fmt
 
+/** 专注页的科目计时列表:运行中科目自动置顶。 */
 @Composable
-fun SubjectsSection(
+fun SubjectTimerList(
     vm: KaoyanViewModel,
     state: AppState,
     now: Long,
@@ -42,18 +42,25 @@ fun SubjectsSection(
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         if (state.subjects.isEmpty()) {
-            TemplateChooser(vm)
+            SectionCard {
+                Text("还没有选择科目模板", color = ColorFg, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(6.dp))
+                Text("到「设置」选择 11408 / 22048 模板后开始计时", color = ColorMuted, fontSize = 13.sp)
+            }
         } else {
-            TemplateHeader(vm, state)
-            state.subjects.forEach { subject ->
+            val ordered = state.subjects.sortedByDescending { sub ->
+                sub.items.any { it.runningSince != null }
+            }
+            ordered.forEach { subject ->
                 SubjectCard(vm, state, subject, now)
             }
         }
     }
 }
 
+/** 模板选择(无模板时)。供设置页使用。 */
 @Composable
-private fun TemplateChooser(vm: KaoyanViewModel) {
+fun TemplateChooser(vm: KaoyanViewModel) {
     SectionCard {
         SectionTitle("选择考研科目模板")
         Spacer(Modifier.height(12.dp))
@@ -62,7 +69,7 @@ private fun TemplateChooser(vm: KaoyanViewModel) {
                 onClick = { vm.applyTemplate("11408") },
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = ColorAccent2,
+                    containerColor = ColorGood,
                     contentColor = ColorBg
                 )
             ) {
@@ -75,7 +82,7 @@ private fun TemplateChooser(vm: KaoyanViewModel) {
                 onClick = { vm.applyTemplate("22048") },
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = ColorAccent,
+                    containerColor = ColorAccent2,
                     contentColor = ColorBg
                 )
             ) {
@@ -88,8 +95,9 @@ private fun TemplateChooser(vm: KaoyanViewModel) {
     }
 }
 
+/** 当前模板 + 切换入口(破坏性,带确认)。供设置页使用。 */
 @Composable
-private fun TemplateHeader(vm: KaoyanViewModel, state: AppState) {
+fun TemplateHeader(vm: KaoyanViewModel, state: AppState) {
     var showConfirm by remember { mutableStateOf(false) }
     var showChooser by remember { mutableStateOf(false) }
 
@@ -107,7 +115,7 @@ private fun TemplateHeader(vm: KaoyanViewModel, state: AppState) {
         ) {
             Text("模板 · $label", color = ColorFg, fontSize = 14.sp, fontWeight = FontWeight.Medium)
             OutlinedButton(onClick = { showConfirm = true }) {
-                Text("切换模板", color = ColorAccent2)
+                Text("切换模板", color = ColorAccent)
             }
         }
 
@@ -117,12 +125,12 @@ private fun TemplateHeader(vm: KaoyanViewModel, state: AppState) {
                 Button(
                     onClick = { vm.applyTemplate("11408"); showChooser = false },
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = ColorAccent2, contentColor = ColorBg)
+                    colors = ButtonDefaults.buttonColors(containerColor = ColorGood, contentColor = ColorBg)
                 ) { Text("11408 学硕") }
                 Button(
                     onClick = { vm.applyTemplate("22048"); showChooser = false },
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = ColorAccent, contentColor = ColorBg)
+                    colors = ButtonDefaults.buttonColors(containerColor = ColorAccent2, contentColor = ColorBg)
                 ) { Text("22048 专硕") }
             }
         }
@@ -152,7 +160,6 @@ private fun SubjectCard(
 ) {
     val multi = subject.items.size > 1
 
-    // 当前选中子项
     val selId = state.sel[subject.name] ?: subject.items.firstOrNull()?.id
     val current: Item? = subject.items.firstOrNull { it.id == selId } ?: subject.items.firstOrNull()
 
@@ -161,10 +168,10 @@ private fun SubjectCard(
     var expanded by remember { mutableStateOf(false) }
 
     val border = if (running) BorderStroke(1.dp, ColorGood) else null
+    val bg = if (running) ColorGoodContainer else ColorCard
 
-    SectionCard(border = border) {
+    SectionCard(border = border, containerColor = bg) {
         if (!multi) {
-            // 单子项:科目名 + 时间 + 按钮
             Text(subject.name, color = ColorFg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(6.dp))
             Text(
@@ -174,7 +181,6 @@ private fun SubjectCard(
                 fontWeight = FontWeight.Bold
             )
         } else {
-            // 多子项:科目名 + 下拉选择
             Text(subject.name, color = ColorFg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(8.dp))
             ExposedDropdownMenuBox(
@@ -224,7 +230,7 @@ private fun SubjectCard(
             Button(
                 onClick = { current?.let { vm.toggleItem(it.id) } },
                 enabled = current != null,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).height(48.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (running) ColorAccent else ColorGood,
                     contentColor = ColorBg

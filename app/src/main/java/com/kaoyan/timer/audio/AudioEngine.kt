@@ -4,30 +4,35 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.media.MediaPlayer
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import com.kaoyan.timer.R
 import kotlin.math.PI
 import kotlin.math.sin
-import kotlin.random.Random
 
 /**
- * 音频引擎:beep 提示音 + 白/棕噪音持续播放 + 振动。
+ * 音频引擎:beep 提示音(合成) + 白/棕噪音(循环播放本地录音) + 振动。
  * 线程安全,切换/停止不崩。
  */
 class AudioEngine(private val context: Context) {
 
     private val sampleRate = 44100
 
-    // ---- 噪音相关 ----
-    @Volatile private var noiseTrack: AudioTrack? = null
-    @Volatile private var noiseThread: Thread? = null
-    @Volatile private var noiseRunning = false
+    // ---- 噪音相关:MediaPlayer 循环播放 res/raw 录音 ----
+    private var noisePlayer: MediaPlayer? = null
     @Volatile private var currentNoiseType: String? = null
-    @Volatile private var volume: Float = 1.0f
+    private var volume: Float = 1.0f
 
     private val lock = Any()
+
+    private fun resFor(type: String): Int = when (type) {
+        "white" -> R.raw.rain_white     // 雨声
+        "brown" -> R.raw.brown_noise    // 棕噪
+        else -> 0
+    }
 
     // ---------------------------------------------------------------
     // beep:880Hz 短音 + 振动
@@ -133,7 +138,7 @@ class AudioEngine(private val context: Context) {
     }
 
     // ---------------------------------------------------------------
-    // 噪音:type "white"/"brown"/null
+    // 噪音:type "white"(雨声)/"brown"(棕噪)/null,循环播放本地录音
     // ---------------------------------------------------------------
     fun setNoise(type: String?, vol: Float) {
         synchronized(lock) {
@@ -143,9 +148,9 @@ class AudioEngine(private val context: Context) {
                 currentNoiseType = null
                 return
             }
-            if (type == currentNoiseType && noiseRunning) {
+            if (type == currentNoiseType && noisePlayer != null) {
                 // 类型未变,仅更新音量
-                noiseTrack?.let { safeSetVolume(it, volume) }
+                noisePlayer?.let { safeSetVolume(it, volume) }
                 return
             }
             // 切换类型:先停旧的,再启动新的
@@ -158,111 +163,38 @@ class AudioEngine(private val context: Context) {
     fun setVolume(vol: Float) {
         synchronized(lock) {
             volume = vol.coerceIn(0f, 1f)
-            noiseTrack?.let { safeSetVolume(it, volume) }
+            noisePlayer?.let { safeSetVolume(it, volume) }
         }
     }
 
-    private fun safeSetVolume(track: AudioTrack, vol: Float) {
+    private fun safeSetVolume(mp: MediaPlayer, vol: Float) {
         try {
-            track.setVolume(vol)
+            mp.setVolume(vol, vol)
         } catch (_: Throwable) {
         }
     }
 
     private fun startNoiseLocked(type: String) {
-        val minBuf = AudioTrack.getMinBufferSize(
-            sampleRate,
-            AudioFormat.CHANNEL_OUT_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
-        )
-        val bufSizeBytes = maxOf(minBuf, 4096)
-
-        val track = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            AudioTrack.Builder()
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setSampleRate(sampleRate)
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                        .build()
-                )
-                .setBufferSizeInBytes(bufSizeBytes)
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .build()
-        } else {
-            @Suppress("DEPRECATION")
-            AudioTrack(
-                AudioManager.STREAM_MUSIC,
-                sampleRate,
-                AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufSizeBytes,
-                AudioTrack.MODE_STREAM
-            )
-        }
-
-        safeSetVolume(track, volume)
+        val resId = resFor(type)
+        if (resId == 0) return
         try {
-            track.play()
+            // create() 会同步 prepare;本地小文件很快
+            val mp = MediaPlayer.create(context, resId) ?: return
+            mp.isLooping = true
+            safeSetVolume(mp, volume)
+            mp.start()
+            noisePlayer = mp
         } catch (_: Throwable) {
-            try { track.release() } catch (_: Throwable) {}
-            return
+            // 创建/播放失败:忽略,保证不崩
         }
-
-        noiseTrack = track
-        noiseRunning = true
-
-        val chunkSamples = 2048
-        val thread = Thread {
-            val chunk = ShortArray(chunkSamples)
-            var last = 0.0
-            while (noiseRunning) {
-                when (type) {
-                    "white" -> {
-                        for (i in 0 until chunkSamples) {
-                            val w = Random.nextDouble(-1.0, 1.0)
-                            chunk[i] = (w * 0.5 * Short.MAX_VALUE).toInt().toShort()
-                        }
-                    }
-                    "brown" -> {
-                        for (i in 0 until chunkSamples) {
-                            val w = Random.nextDouble(-1.0, 1.0)
-                            last = (last + 0.02 * w) / 1.02 * 3.5
-                            val v = last.coerceIn(-1.0, 1.0)
-                            chunk[i] = (v * 0.5 * Short.MAX_VALUE).toInt().toShort()
-                        }
-                    }
-                    else -> {
-                        for (i in 0 until chunkSamples) chunk[i] = 0
-                    }
-                }
-                val t = noiseTrack ?: break
-                try {
-                    t.write(chunk, 0, chunkSamples)
-                } catch (_: Throwable) {
-                    break
-                }
-            }
-        }.apply { isDaemon = true }
-        noiseThread = thread
-        thread.start()
     }
 
     private fun stopNoiseLocked() {
-        noiseRunning = false
-        val thread = noiseThread
-        noiseThread = null
-        val track = noiseTrack
-        noiseTrack = null
-        if (thread != null) {
-            try {
-                thread.join(500)
-            } catch (_: InterruptedException) {
-            }
-        }
-        if (track != null) {
-            try { track.stop() } catch (_: Throwable) {}
-            try { track.release() } catch (_: Throwable) {}
+        val mp = noisePlayer
+        noisePlayer = null
+        if (mp != null) {
+            try { mp.stop() } catch (_: Throwable) {}
+            try { mp.release() } catch (_: Throwable) {}
         }
     }
 
