@@ -346,6 +346,34 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         return result
     }
 
+    // ---------------------------------------------------------------
+    // 备份 / 多端同步:导出已结算快照 / 导入覆盖
+    // ---------------------------------------------------------------
+    /** 导出此刻的干净快照:把在途时长结算进 seconds/daily,清掉运行中状态与 pomo。 */
+    fun exportJson(): String {
+        val now = System.currentTimeMillis()
+        val s = copyState(_state.value)
+        for (sub in s.subjects) for (it in sub.items) {
+            it.seconds = itemSeconds(it, now)
+            it.runningSince = null
+        }
+        s.daily[TimeUtil.todayKey(now)] = todaySeconds(now)
+        s.pomo = null
+        return store.serialize(s)
+    }
+
+    /** 导入备份:覆盖本机数据。解析失败返回 false。 */
+    fun importJson(text: String): Boolean {
+        val imported = store.deserialize(text) ?: return false
+        for (sub in imported.subjects) for (it in sub.items) it.runningSince = null
+        imported.pomo = null
+        if (imported.startDate.isBlank()) {
+            imported.startDate = TimeUtil.todayKey(System.currentTimeMillis())
+        }
+        publish(imported)
+        return true
+    }
+
     override fun onCleared() {
         super.onCleared()
         audio.release()

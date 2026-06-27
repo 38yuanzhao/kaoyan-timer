@@ -41,6 +41,16 @@ class Store(context: Context) {
         }
     }
 
+    /** 导出:AppState → JSON 字符串(供备份/同步)。 */
+    fun serialize(s: AppState): String = json.encodeToString(s)
+
+    /** 导入:JSON 字符串 → AppState,解析失败返回 null。 */
+    fun deserialize(text: String): AppState? = try {
+        json.decodeFromString<AppState>(text)
+    } catch (e: Exception) {
+        null
+    }
+
     companion object {
         private const val PREFS_NAME = "kaoyan"
         private const val KEY_STATE = "state"
