@@ -81,6 +81,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             startDate = src.startDate,
             subjects = newSubjects,
             daily = HashMap(src.daily),
+            dailySub = HashMap(src.dailySub.mapValues { HashMap(it.value) }),
             pomo = src.pomo?.let { Pomo(it.itemId, it.phase, it.startAt, it.endsAt, it.pausedAt) },
             focusMin = src.focusMin,
             breakMin = src.breakMin,
@@ -89,11 +90,19 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    private fun addDaily(s: AppState, key: String, secs: Double) {
+    /** 结算秒数:同时记到当日总时长 daily 与当日该科 dailySub。subject 为空则只记总量。 */
+    private fun addDaily(s: AppState, key: String, secs: Double, subject: String) {
         val cur = s.daily[key] ?: 0.0
-        val v = (cur + secs).coerceAtLeast(0.0)
-        s.daily[key] = v
+        s.daily[key] = (cur + secs).coerceAtLeast(0.0)
+        if (subject.isNotEmpty()) {
+            val m = s.dailySub.getOrPut(key) { mutableMapOf() }
+            m[subject] = ((m[subject] ?: 0.0) + secs).coerceAtLeast(0.0)
+        }
     }
+
+    /** 找 itemId 所属科目名,用于按科记账。 */
+    private fun subjectNameOf(s: AppState, itemId: String): String =
+        s.subjects.firstOrNull { sub -> sub.items.any { it.id == itemId } }?.name ?: ""
 
     // ---------------------------------------------------------------
     // 动作
@@ -108,6 +117,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             startDate = s.startDate,
             subjects = Templates.build(key),
             daily = HashMap(s.daily), // 保留 daily
+            dailySub = HashMap(s.dailySub.mapValues { HashMap(it.value) }), // 保留按科历史
             pomo = null,
             focusMin = s.focusMin,
             breakMin = s.breakMin,
@@ -130,7 +140,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             val elapsed = (now - rs) / 1000.0
             if (elapsed > 0) {
                 item.seconds += elapsed
-                addDaily(s, TimeUtil.todayKey(now), elapsed)
+                addDaily(s, TimeUtil.todayKey(now), elapsed, subjectNameOf(s, id))
             }
             item.runningSince = null
         }
@@ -143,7 +153,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         val item = s.subjects.flatMap { it.items }.firstOrNull { it.id == id } ?: return
         val secs = minutes * 60.0
         item.seconds = (item.seconds + secs).coerceAtLeast(0.0)
-        addDaily(s, TimeUtil.todayKey(now), secs)
+        addDaily(s, TimeUtil.todayKey(now), secs, subjectNameOf(s, id))
         publish(s)
     }
 
@@ -159,7 +169,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
                     val elapsed = (now - rs) / 1000.0
                     if (elapsed > 0) {
                         it.seconds += elapsed
-                        addDaily(s, TimeUtil.todayKey(now), elapsed)
+                        addDaily(s, TimeUtil.todayKey(now), elapsed, subject.name)
                     }
                     it.runningSince = null
                 }
@@ -217,7 +227,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
                 val item = s.subjects.flatMap { it.items }.firstOrNull { it.id == p.itemId }
                 if (item != null) {
                     item.seconds += elapsed
-                    addDaily(s, TimeUtil.todayKey(end), elapsed)
+                    addDaily(s, TimeUtil.todayKey(end), elapsed, subjectNameOf(s, p.itemId))
                 }
             }
         }
@@ -265,7 +275,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             val focusSecs = (p.endsAt - p.startAt) / 1000.0
             if (item != null && focusSecs > 0) {
                 item.seconds += focusSecs
-                addDaily(s, TimeUtil.todayKey(p.endsAt), focusSecs)
+                addDaily(s, TimeUtil.todayKey(p.endsAt), focusSecs, subjectNameOf(s, p.itemId))
             }
             audio.beep()
             // 转 break
@@ -298,7 +308,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             val focusSecs = (p.endsAt - p.startAt) / 1000.0
             if (item != null && focusSecs > 0) {
                 item.seconds += focusSecs
-                addDaily(s, TimeUtil.todayKey(p.endsAt), focusSecs)
+                addDaily(s, TimeUtil.todayKey(p.endsAt), focusSecs, subjectNameOf(s, p.itemId))
             }
         }
         s.pomo = null
@@ -334,6 +344,45 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             if (elapsed > 0) extra += elapsed
         }
         return extra
+    }
+
+    /** 某科当前在途秒数:该科在跑 item + (若 pomo focus 的 item 属于该科)番茄在途。 */
+    private fun liveExtraForSubject(sub: Subject, now: Long): Double {
+        var e = 0.0
+        for (it in sub.items) {
+            val rs = it.runningSince
+            if (rs != null) e += (now - rs) / 1000.0
+        }
+        val pomo = _state.value.pomo
+        if (pomo != null && pomo.phase == "focus" && sub.items.any { it.id == pomo.itemId }) {
+            val cappedNow = pomo.pausedAt ?: minOf(now, pomo.endsAt)
+            val elapsed = (cappedNow - pomo.startAt) / 1000.0
+            if (elapsed > 0) e += elapsed
+        }
+        return e
+    }
+
+    data class SubjectSlice(val name: String, val secs: Double)
+
+    /**
+     * 各科占比饼图取数。range: "today" 今日 / "week" 近7天 / "all" 累计。
+     * 已结算部分 today/week 取 dailySub,all 取 item.seconds 之和;再叠加该科今日在途。
+     */
+    fun subjectBreakdown(range: String, now: Long): List<SubjectSlice> {
+        val s = _state.value
+        val keys: List<String> = when (range) {
+            "today" -> listOf(TimeUtil.todayKey(now))
+            "week" -> (0..6).map { TimeUtil.dayKeyOffset(now, it) }
+            else -> emptyList()
+        }
+        return s.subjects.map { sub ->
+            val settled = if (range == "all") {
+                sub.items.sumOf { it.seconds }
+            } else {
+                keys.sumOf { k -> s.dailySub[k]?.get(sub.name) ?: 0.0 }
+            }
+            SubjectSlice(sub.name, settled + liveExtraForSubject(sub, now))
+        }
     }
 
     /** 番茄剩余秒数;暂停时以冻结点计,供两个 UI 复用。 */
@@ -398,12 +447,19 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     /** 导出此刻的干净快照:把在途时长结算进 seconds/daily,清掉运行中状态与 pomo。 */
     fun exportJson(): String {
         val now = System.currentTimeMillis()
+        val today = TimeUtil.todayKey(now)
         val s = copyState(_state.value)
+        // 趁 running/pomo 还在,先把今日各科在途折进 dailySub(与 daily[today] 一致)
+        val m = s.dailySub.getOrPut(today) { mutableMapOf() }
+        for (sub in _state.value.subjects) {
+            val extra = liveExtraForSubject(sub, now)
+            if (extra > 0) m[sub.name] = (m[sub.name] ?: 0.0) + extra
+        }
         for (sub in s.subjects) for (it in sub.items) {
             it.seconds = itemSeconds(it, now)
             it.runningSince = null
         }
-        s.daily[TimeUtil.todayKey(now)] = todaySeconds(now)
+        s.daily[today] = todaySeconds(now)
         s.pomo = null
         return store.serialize(s)
     }

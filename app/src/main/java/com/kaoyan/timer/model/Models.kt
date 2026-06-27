@@ -31,6 +31,8 @@ data class AppState(
     var startDate: String = "",
     var subjects: List<Subject> = emptyList(),
     var daily: MutableMap<String, Double> = mutableMapOf(),
+    // 按天×按科累计秒数:日期"yyyy-MM-dd" -> 科目名 -> 秒;供各科占比饼图按今日/近7天/累计取数
+    var dailySub: MutableMap<String, MutableMap<String, Double>> = mutableMapOf(),
     var pomo: Pomo? = null,
     var focusMin: Int = 25,
     var breakMin: Int = 5,

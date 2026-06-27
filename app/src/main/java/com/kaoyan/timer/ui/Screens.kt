@@ -380,49 +380,9 @@ fun DataScreen(vm: KaoyanViewModel, state: AppState, now: Long) {
     ) {
         Spacer(Modifier.height(6.dp))
         ChartCard(vm, now)
-        SubjectDistributionCard(vm, state, now)
+        SubjectPieCard(vm, state, now)
         TodayTotalRow(vm, state, now)
         Spacer(Modifier.height(12.dp))
-    }
-}
-
-@Composable
-private fun SubjectDistributionCard(vm: KaoyanViewModel, state: AppState, now: Long) {
-    SectionCard {
-        Text("各科投入分布", color = ColorFg, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-        Spacer(Modifier.height(12.dp))
-        if (state.subjects.isEmpty()) {
-            Text("暂无数据", color = ColorMuted, fontSize = 13.sp)
-        } else {
-            val rows = state.subjects.map { it.name to vm.subjectSeconds(it, now) }
-            val max = (rows.maxOfOrNull { it.second } ?: 0.0).coerceAtLeast(1.0)
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                rows.forEach { (name, secs) ->
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(name, color = ColorFg, fontSize = 13.sp, modifier = Modifier.width(56.dp))
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(14.dp)
-                                .clip(RoundedCornerShape(7.dp))
-                                .background(ColorCard2)
-                        ) {
-                            val frac = (secs / max).toFloat().coerceIn(0f, 1f)
-                            if (frac > 0f) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth(frac)
-                                        .fillMaxHeight()
-                                        .clip(RoundedCornerShape(7.dp))
-                                        .background(ColorGood)
-                                )
-                            }
-                        }
-                        Text(fmt(secs), color = ColorMuted, fontSize = 12.sp, maxLines = 1, modifier = Modifier.widthIn(min = 64.dp))
-                    }
-                }
-            }
-        }
     }
 }
 
