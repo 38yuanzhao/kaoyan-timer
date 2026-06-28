@@ -1,7 +1,6 @@
 package com.kaoyan.timer.util
 
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -23,14 +22,7 @@ object TimeUtil {
 
     fun dateToMillisLocalMidnight(yyyyMMdd: String): Long {
         return try {
-            val d = sdf.parse(yyyyMMdd) ?: return 0L
-            val cal = Calendar.getInstance()
-            cal.time = d
-            cal.set(Calendar.HOUR_OF_DAY, 0)
-            cal.set(Calendar.MINUTE, 0)
-            cal.set(Calendar.SECOND, 0)
-            cal.set(Calendar.MILLISECOND, 0)
-            cal.timeInMillis
+            sdf.parse(yyyyMMdd)?.time ?: 0L
         } catch (e: Exception) {
             0L
         }

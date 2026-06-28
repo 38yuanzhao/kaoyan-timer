@@ -49,8 +49,6 @@ import com.kaoyan.timer.model.Subtask
 import com.kaoyan.timer.util.mmss
 import java.util.UUID
 
-private data class PomoOption(val id: String, val label: String)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PomodoroCard(
@@ -61,7 +59,7 @@ fun PomodoroCard(
 ) {
     val options = remember(state.subjects) {
         state.subjects.flatMap { s ->
-            s.items.map { it -> PomoOption(it.id, "${s.name} · ${it.name}") }
+            s.items.map { it -> it.id to "${s.name} · ${it.name}" }
         }
     }
 
@@ -69,8 +67,8 @@ fun PomodoroCard(
     var selectedId by remember(state.subjects) {
         mutableStateOf(
             state.pomo?.itemId
-                ?: state.lastPomoItemId?.takeIf { id -> options.any { it.id == id } }
-                ?: options.firstOrNull()?.id
+                ?: state.lastPomoItemId?.takeIf { id -> options.any { it.first == id } }
+                ?: options.firstOrNull()?.first
         )
     }
     if (pomoRunning && state.pomo?.itemId != null) {
@@ -81,7 +79,7 @@ fun PomodoroCard(
     var showBreakdown by remember { mutableStateOf(false) }
 
     val selItem = state.subjects.flatMap { it.items }.firstOrNull { it.id == selectedId }
-    val selectedLabel = options.firstOrNull { it.id == selectedId }?.label ?: "选择子项"
+    val selectedLabel = options.firstOrNull { it.first == selectedId }?.second ?: "选择子项"
 
     val isBreak = state.pomo?.phase == "break"
     val isOvertime = state.pomo?.phase == "overtime"
@@ -134,10 +132,10 @@ fun PomodoroCard(
             ) {
                 options.forEach { opt ->
                     DropdownMenuItem(
-                        text = { Text(opt.label, color = ColorFg) },
+                        text = { Text(opt.second, color = ColorFg) },
                         onClick = {
-                            selectedId = opt.id
-                            vm.selectPomoItem(opt.id) // 持久化选择,重开后恢复
+                            selectedId = opt.first
+                            vm.selectPomoItem(opt.first) // 持久化选择,重开后恢复
                             expanded = false
                         }
                     )
@@ -200,44 +198,13 @@ fun PomodoroCard(
             }
         } else {
             val chainSub = state.pomo?.subtaskId
-            if (chainSub != null && selItem != null && !isBreak) {
-                // 拆解链 focus/超时态:主操作是「完成本段」,暂停/停止降为描边
-                Button(
-                    onClick = { vm.markSubtaskDone(selItem.id, chainSub) },
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = ColorGood, contentColor = ColorBg)
-                ) { Text("完成本段 ✓", fontWeight = FontWeight.SemiBold) }
-                Spacer(Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = { if (paused) vm.resumePomo() else vm.pausePomo() },
-                        modifier = Modifier.weight(1f).height(52.dp)
-                    ) { Text(if (paused) "继续 ▶" else "暂停 ❚❚", color = ColorGood, fontWeight = FontWeight.SemiBold) }
-                    OutlinedButton(
-                        onClick = { vm.stopPomo() },
-                        modifier = Modifier.weight(1f).height(52.dp)
-                    ) { Text("停止", color = ColorAccent, fontWeight = FontWeight.SemiBold) }
-                }
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Button(
-                        onClick = { if (paused) vm.resumePomo() else vm.pausePomo() },
-                        modifier = Modifier.weight(1f).height(52.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = ColorGood, contentColor = ColorBg)
-                    ) { Text(if (paused) "继续 ▶" else "暂停 ❚❚", fontWeight = FontWeight.SemiBold) }
-                    Button(
-                        onClick = { vm.stopPomo() },
-                        modifier = Modifier.weight(1f).height(52.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = ColorAccent, contentColor = ColorBg)
-                    ) { Text("停止", fontWeight = FontWeight.SemiBold) }
-                }
-            }
+            PomoControls(
+                paused = paused,
+                chainActive = chainSub != null && selItem != null && !isBreak,
+                onComplete = { chainSub?.let { selItem?.let { item -> vm.markSubtaskDone(item.id, it) } } },
+                onPauseToggle = { if (paused) vm.resumePomo() else vm.pausePomo() },
+                onStop = { vm.stopPomo() }
+            )
             // 拆解链运行态:卡片内清单条
             if (state.pomo?.subtaskId != null && selItem != null) {
                 Spacer(Modifier.height(16.dp))
@@ -309,6 +276,82 @@ private fun PomoDurationDialog(
         titleContentColor = ColorFg,
         textContentColor = ColorFg
     )
+}
+
+@Composable
+fun PomoControls(
+    paused: Boolean,
+    chainActive: Boolean,
+    onComplete: () -> Unit,
+    onPauseToggle: () -> Unit,
+    onStop: () -> Unit,
+    modifier: Modifier = Modifier,
+    inlineStop: Boolean = true
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        if (chainActive) {
+            Button(
+                onClick = onComplete,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = ColorGood, contentColor = ColorBg)
+            ) { Text("完成本段 ✓", fontWeight = FontWeight.SemiBold) }
+            Spacer(Modifier.height(10.dp))
+        }
+
+        if (inlineStop) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                PomoPauseButton(paused, onPauseToggle, outlined = chainActive, Modifier.weight(1f))
+                PomoStopButton(onStop, outlined = chainActive, Modifier.weight(1f))
+            }
+        } else {
+            PomoPauseButton(paused, onPauseToggle, outlined = chainActive, Modifier.fillMaxWidth())
+            Spacer(Modifier.height(10.dp))
+            PomoStopButton(onStop, outlined = true, Modifier.fillMaxWidth())
+        }
+    }
+}
+
+@Composable
+private fun PomoPauseButton(
+    paused: Boolean,
+    onClick: () -> Unit,
+    outlined: Boolean,
+    modifier: Modifier
+) {
+    val text = if (paused) "继续 ▶" else "暂停 ❚❚"
+    if (outlined) {
+        OutlinedButton(onClick = onClick, modifier = modifier.height(52.dp)) {
+            Text(text, color = ColorGood, fontWeight = FontWeight.SemiBold)
+        }
+    } else {
+        Button(
+            onClick = onClick,
+            modifier = modifier.height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = ColorGood, contentColor = ColorBg)
+        ) { Text(text, fontWeight = FontWeight.SemiBold) }
+    }
+}
+
+@Composable
+private fun PomoStopButton(
+    onClick: () -> Unit,
+    outlined: Boolean,
+    modifier: Modifier
+) {
+    if (outlined) {
+        OutlinedButton(onClick = onClick, modifier = modifier.height(52.dp)) {
+            Text("停止", color = ColorAccent, fontWeight = FontWeight.SemiBold)
+        }
+    } else {
+        Button(
+            onClick = onClick,
+            modifier = modifier.height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = ColorAccent, contentColor = ColorBg)
+        ) { Text("停止", fontWeight = FontWeight.SemiBold) }
+    }
 }
 
 /** 拆解链清单条:竖排小任务,当前高亮、已完成划线、可手动打勾。卡片态与全屏专注共用。 */

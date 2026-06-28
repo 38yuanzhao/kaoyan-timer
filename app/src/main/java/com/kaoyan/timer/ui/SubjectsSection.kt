@@ -30,6 +30,7 @@ import com.kaoyan.timer.KaoyanViewModel
 import com.kaoyan.timer.model.AppState
 import com.kaoyan.timer.model.Item
 import com.kaoyan.timer.model.Subject
+import com.kaoyan.timer.model.Templates
 import com.kaoyan.timer.util.fmt
 
 /** 专注页的科目计时列表:运行中科目自动置顶。 */
@@ -64,34 +65,7 @@ fun TemplateChooser(vm: KaoyanViewModel) {
     SectionCard {
         SectionTitle("选择考研科目模板")
         Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(
-                onClick = { vm.applyTemplate("11408") },
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = ColorGood,
-                    contentColor = ColorBg
-                )
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("11408 学硕", fontWeight = FontWeight.SemiBold)
-                    Text("数一/408/英一", fontSize = 11.sp)
-                }
-            }
-            Button(
-                onClick = { vm.applyTemplate("22048") },
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = ColorAccent2,
-                    contentColor = ColorBg
-                )
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("22048 专硕", fontWeight = FontWeight.SemiBold)
-                    Text("数二/408/英二", fontSize = 11.sp)
-                }
-            }
-        }
+        TemplateButtons(vm)
     }
 }
 
@@ -101,11 +75,7 @@ fun TemplateHeader(vm: KaoyanViewModel, state: AppState) {
     var showConfirm by remember { mutableStateOf(false) }
     var showChooser by remember { mutableStateOf(false) }
 
-    val label = when (state.template) {
-        "11408" -> "11408 学硕"
-        "22048" -> "22048 专硕"
-        else -> state.template ?: "自定义"
-    }
+    val label = state.template?.let { Templates.all[it]?.label ?: it } ?: "自定义"
 
     SectionCard {
         Row(
@@ -121,18 +91,7 @@ fun TemplateHeader(vm: KaoyanViewModel, state: AppState) {
 
         if (showChooser) {
             Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(
-                    onClick = { vm.applyTemplate("11408"); showChooser = false },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = ColorGood, contentColor = ColorBg)
-                ) { Text("11408 学硕") }
-                Button(
-                    onClick = { vm.applyTemplate("22048"); showChooser = false },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = ColorAccent2, contentColor = ColorBg)
-                ) { Text("22048 专硕") }
-            }
+            TemplateButtons(vm, compact = true) { showChooser = false }
         }
     }
 
@@ -147,6 +106,40 @@ fun TemplateHeader(vm: KaoyanViewModel, state: AppState) {
                 showChooser = true
             }
         )
+    }
+}
+
+private val TemplateButtonColors = listOf(ColorGood, ColorAccent2)
+
+@Composable
+private fun TemplateButtons(
+    vm: KaoyanViewModel,
+    compact: Boolean = false,
+    onApplied: () -> Unit = {}
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Templates.all.entries.forEachIndexed { i, (key, tpl) ->
+            Button(
+                onClick = {
+                    vm.applyTemplate(key)
+                    onApplied()
+                },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = TemplateButtonColors[i % TemplateButtonColors.size],
+                    contentColor = ColorBg
+                )
+            ) {
+                if (compact) {
+                    Text(tpl.label)
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(tpl.label, fontWeight = FontWeight.SemiBold)
+                        Text(tpl.note, fontSize = 11.sp)
+                    }
+                }
+            }
+        }
     }
 }
 
