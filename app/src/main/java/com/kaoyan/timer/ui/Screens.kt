@@ -380,32 +380,14 @@ fun FocusModeScreen(
             Text("今日已投入 ${"%.1f".format(todayH)} 小时", color = ColorMuted, fontSize = 13.sp)
             Spacer(Modifier.height(16.dp))
             val chainSub = pomo.subtaskId
-            if (chainSub != null && chainItem != null && !isBreak) {
-                // 拆解链 focus/超时态:主操作「完成本段」,暂停降为描边
-                Button(
-                    onClick = { vm.markSubtaskDone(chainItem.id, chainSub) },
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = ColorGood, contentColor = ColorBg)
-                ) { Text("完成本段 ✓", fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
-                Spacer(Modifier.height(10.dp))
-                OutlinedButton(
-                    onClick = { if (paused) vm.resumePomo() else vm.pausePomo() },
-                    modifier = Modifier.fillMaxWidth().height(52.dp)
-                ) { Text(if (paused) "继续 ▶" else "暂停 ❚❚", color = ColorGood, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
-            } else {
-                Button(
-                    onClick = { if (paused) vm.resumePomo() else vm.pausePomo() },
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = ColorGood, contentColor = ColorBg)
-                ) { Text(if (paused) "继续 ▶" else "暂停 ❚❚", fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
-            }
-            Spacer(Modifier.height(10.dp))
-            OutlinedButton(
-                onClick = onStop,
-                modifier = Modifier.fillMaxWidth().height(52.dp)
-            ) {
-                Text("停止", color = ColorAccent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            }
+            PomoControls(
+                paused = paused,
+                chainActive = chainSub != null && chainItem != null && !isBreak,
+                onComplete = { chainSub?.let { chainItem?.let { item -> vm.markSubtaskDone(item.id, it) } } },
+                onPauseToggle = { if (paused) vm.resumePomo() else vm.pausePomo() },
+                onStop = onStop,
+                inlineStop = false
+            )
             Spacer(Modifier.height(8.dp))
         }
     }

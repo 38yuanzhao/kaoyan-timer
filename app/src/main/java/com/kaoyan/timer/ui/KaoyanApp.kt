@@ -24,11 +24,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.kaoyan.timer.KaoyanViewModel
-
-private data class TabItem(val label: String, val icon: ImageVector)
 
 @Composable
 fun KaoyanApp(vm: KaoyanViewModel) {
@@ -42,10 +39,10 @@ fun KaoyanApp(vm: KaoyanViewModel) {
     var volume by rememberSaveable { mutableFloatStateOf(0.5f) }
 
     val tabs = listOf(
-        TabItem("仪表盘", Icons.Filled.Home),
-        TabItem("专注", Icons.Filled.PlayArrow),
-        TabItem("数据", Icons.Filled.DateRange),
-        TabItem("设置", Icons.Filled.Settings)
+        "仪表盘" to Icons.Filled.Home,
+        "专注" to Icons.Filled.PlayArrow,
+        "数据" to Icons.Filled.DateRange,
+        "设置" to Icons.Filled.Settings
     )
 
     // 番茄运行时整屏接管;最小化可退回普通界面(计时不停)
@@ -69,8 +66,8 @@ fun KaoyanApp(vm: KaoyanViewModel) {
                     NavigationBarItem(
                         selected = selectedTab == i,
                         onClick = { selectedTab = i },
-                        icon = { Icon(t.icon, contentDescription = t.label) },
-                        label = { Text(t.label) },
+                        icon = { Icon(t.second, contentDescription = t.first) },
+                        label = { Text(t.first) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = ColorGood,
                             selectedTextColor = ColorGood,
