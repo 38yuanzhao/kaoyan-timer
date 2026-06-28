@@ -56,6 +56,7 @@ import com.kaoyan.timer.audio.AudioEngine
 import com.kaoyan.timer.model.AppState
 import com.kaoyan.timer.util.TimeUtil
 import com.kaoyan.timer.util.fmt
+import com.kaoyan.timer.util.hm
 import com.kaoyan.timer.util.mmss
 
 @Composable
@@ -153,14 +154,13 @@ private fun HeroCountdown(vm: KaoyanViewModel, state: AppState, now: Long) {
 @Composable
 private fun StatTilesGrid(vm: KaoyanViewModel, state: AppState, now: Long) {
     val pct = vm.progressPct(now)
-    val todayH = vm.todaySeconds(now) / 3600.0
     val total = state.subjects.sumOf { s -> s.items.sumOf { vm.itemSeconds(it, now) } }
     val streak = computeStreak(state, now)
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             StatTile("备考进度", "%.0f%%".format(pct), ColorGood, ring = pct / 100f, modifier = Modifier.weight(1f))
-            StatTile("今日投入", "%.1fh".format(todayH), ColorGood, modifier = Modifier.weight(1f))
+            StatTile("今日投入", hm(vm.todaySeconds(now)), ColorGood, modifier = Modifier.weight(1f))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             StatTile("连续天数", "$streak 天", ColorGood, emoji = "🔥", modifier = Modifier.weight(1f))
@@ -251,7 +251,6 @@ fun FocusScreen(
 
 @Composable
 private fun MiniStatusBar(vm: KaoyanViewModel, state: AppState, now: Long, onExpand: () -> Unit) {
-    val todayH = vm.todaySeconds(now) / 3600.0
     val pomo = state.pomo
     val running = pomo != null
     val pomoText = if (pomo == null) {
@@ -278,7 +277,7 @@ private fun MiniStatusBar(vm: KaoyanViewModel, state: AppState, now: Long, onExp
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("今日 ${"%.1fh".format(todayH)}", color = ColorFg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text("今日 ${hm(vm.todaySeconds(now))}", color = ColorFg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             Text(
                 pomoText,
                 color = when (pomo?.phase) {
@@ -315,7 +314,6 @@ fun FocusModeScreen(
         isBreak -> "休息中"
         else -> "专注中"
     }
-    val todayH = vm.todaySeconds(now) / 3600.0
     val subjectLabel = remember(state.subjects, pomo.itemId) {
         state.subjects.flatMap { s -> s.items.map { s.name to it } }
             .firstOrNull { it.second.id == pomo.itemId }
@@ -377,7 +375,7 @@ fun FocusModeScreen(
                 ChainChecklist(vm, chainItem, pomo, modifier = Modifier.padding(horizontal = 8.dp))
                 Spacer(Modifier.height(14.dp))
             }
-            Text("今日已投入 ${"%.1f".format(todayH)} 小时", color = ColorMuted, fontSize = 13.sp)
+            Text("今日已投入 ${hm(vm.todaySeconds(now))}", color = ColorMuted, fontSize = 13.sp)
             Spacer(Modifier.height(16.dp))
             val chainSub = pomo.subtaskId
             if (chainSub != null && chainItem != null && !isBreak) {

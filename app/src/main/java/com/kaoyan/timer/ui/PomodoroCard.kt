@@ -67,7 +67,11 @@ fun PomodoroCard(
 
     val pomoRunning = state.pomo != null
     var selectedId by remember(state.subjects) {
-        mutableStateOf(state.pomo?.itemId ?: options.firstOrNull()?.id)
+        mutableStateOf(
+            state.pomo?.itemId
+                ?: state.lastPomoItemId?.takeIf { id -> options.any { it.id == id } }
+                ?: options.firstOrNull()?.id
+        )
     }
     if (pomoRunning && state.pomo?.itemId != null) {
         selectedId = state.pomo?.itemId
@@ -133,6 +137,7 @@ fun PomodoroCard(
                         text = { Text(opt.label, color = ColorFg) },
                         onClick = {
                             selectedId = opt.id
+                            vm.selectPomoItem(opt.id) // 持久化选择,重开后恢复
                             expanded = false
                         }
                     )

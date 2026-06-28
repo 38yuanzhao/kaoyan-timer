@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import com.kaoyan.timer.KaoyanViewModel
 import com.kaoyan.timer.model.AppState
 import com.kaoyan.timer.util.fmt
+import com.kaoyan.timer.util.hmc
 
 // 各科配色:按科目顺序分配,自定义科目顺延取色(满了循环)
 val SubjectPalette = listOf(
@@ -134,7 +135,7 @@ fun SubjectPieCard(vm: KaoyanViewModel, state: AppState, now: Long) {
                                 val ly = cy + (labelR * kotlin.math.sin(rad)).toFloat()
                                 val fm = labelPaint.fontMetrics
                                 drawContext.canvas.nativeCanvas.drawText(
-                                    "%.1fh".format(sl.secs / 3600.0),
+                                    hmc(sl.secs),
                                     lx, ly - (fm.descent + fm.ascent) / 2f, labelPaint
                                 )
                             }
@@ -143,7 +144,7 @@ fun SubjectPieCard(vm: KaoyanViewModel, state: AppState, now: Long) {
                     }
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("%.1fh".format(total / 3600.0), color = ColorFg, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                    Text(hmc(total), color = ColorFg, fontSize = 26.sp, fontWeight = FontWeight.Bold)
                     Text(
                         RangeOptions.firstOrNull { it.first == range }?.second ?: "",
                         color = ColorMuted,

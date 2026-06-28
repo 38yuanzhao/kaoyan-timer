@@ -44,10 +44,14 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         reconcile()
         viewModelScope.launch {
             while (true) {
-                val n = System.currentTimeMillis()
-                _now.value = n
-                tickPomo(n)
-                syncPomoNotification(n)
+                try {
+                    val n = System.currentTimeMillis()
+                    _now.value = n
+                    tickPomo(n)
+                    syncPomoNotification(n)
+                } catch (_: Throwable) {
+                    // 单次 tick 异常不能打断整个心跳:否则 _now 永久冻结、所有计时(含超时正计时)卡死且重启才恢复
+                }
                 delay(1000)
             }
         }
@@ -72,17 +76,24 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             p.phase == "break" -> "休息中"
             else -> "专注中"
         }
-        val timeText = if (p.phase == "overtime") "+" + mmss(pomoOvertimeSec(now)) else mmss(pomoRemainSec(now))
         val chain = if (p.subtaskId != null && item != null) {
             val idx = item.subtasks.indexOfFirst { it.id == p.subtaskId }
             if (idx >= 0) " · 第 ${idx + 1}/${item.subtasks.size}" else ""
         } else ""
-        val text = "$phase $timeText$chain"
+        // 运行态:让系统 chronometer 渲染计时(息屏/Doze 也不冻结);暂停态:静态文案冻结在当前值
+        val paused = p.pausedAt != null
+        val countDown = p.phase != "overtime"
+        val text = if (paused) {
+            val frozen = if (p.phase == "overtime") "+" + mmss(pomoOvertimeSec(now)) else mmss(pomoRemainSec(now))
+            "$phase $frozen$chain"
+        } else {
+            "$phase$chain"
+        }
         if (!pomoServiceOn) {
-            PomodoroService.start(app, title, text)
+            PomodoroService.start(app, title, text, p.endsAt, chrono = !paused, countDown = countDown)
             pomoServiceOn = true
         } else {
-            PomodoroService.update(app, title, text)
+            PomodoroService.update(app, title, text, p.endsAt, chrono = !paused, countDown = countDown)
         }
     }
 
@@ -128,7 +139,8 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             focusMin = src.focusMin,
             breakMin = src.breakMin,
             template = src.template,
-            sel = HashMap(src.sel)
+            sel = HashMap(src.sel),
+            lastPomoItemId = src.lastPomoItemId
         )
     }
 
@@ -184,7 +196,8 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             focusMin = s.focusMin,
             breakMin = s.breakMin,
             template = key,
-            sel = HashMap()
+            sel = HashMap(),
+            lastPomoItemId = null // 换模板后子项 id 全变,重置番茄选择
         )
         publish(newState)
     }
@@ -246,6 +259,13 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         s.sel[subjectName] = itemId
+        publish(s)
+    }
+
+    /** 记住番茄钟当前选中的子项(仅持久化,不结算任何在跑秒表,避免 selectSubItem 的副作用)。 */
+    fun selectPomoItem(itemId: String) {
+        val s = copyState(_state.value)
+        s.lastPomoItemId = itemId
         publish(s)
     }
 

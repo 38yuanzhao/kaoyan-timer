@@ -47,5 +47,6 @@ data class AppState(
     var focusMin: Int = 25,
     var breakMin: Int = 5,
     var template: String? = null,
-    var sel: MutableMap<String, String> = mutableMapOf()
+    var sel: MutableMap<String, String> = mutableMapOf(),
+    var lastPomoItemId: String? = null // 番茄钟上次选中的子项,用于重开后恢复选择
 )
