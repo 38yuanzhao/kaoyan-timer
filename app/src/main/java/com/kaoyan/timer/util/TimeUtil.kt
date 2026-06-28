@@ -45,3 +45,19 @@ fun mmss(seconds: Long): String {
     val sec = s % 60
     return String.format(Locale.getDefault(), "%02d:%02d", m, sec)
 }
+
+/** 分钟优先:不足 60 分钟显示「X 分钟」,满 60 分钟显示「X 小时Y 分钟」(整点省略分钟)。用于有空间的文案。 */
+fun hm(seconds: Double): String {
+    val m = (seconds / 60).toLong().coerceAtLeast(0)
+    if (m < 60) return "${m}分钟"
+    val r = m % 60
+    return if (r == 0L) "${m / 60}小时" else "${m / 60}小时${r}分钟"
+}
+
+/** hm 的紧凑版(时/分),给饼图、柱状图等空间窄的地方用。 */
+fun hmc(seconds: Double): String {
+    val m = (seconds / 60).toLong().coerceAtLeast(0)
+    if (m < 60) return "${m}分"
+    val r = m % 60
+    return if (r == 0L) "${m / 60}时" else "${m / 60}时${r}分"
+}

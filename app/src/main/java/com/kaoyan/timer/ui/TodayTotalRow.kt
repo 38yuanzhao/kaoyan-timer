@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.sp
 import com.kaoyan.timer.KaoyanViewModel
 import com.kaoyan.timer.model.AppState
 import com.kaoyan.timer.util.fmt
+import com.kaoyan.timer.util.hm
 
 @Composable
 fun TodayTotalRow(
@@ -24,7 +25,6 @@ fun TodayTotalRow(
     now: Long,
     modifier: Modifier = Modifier
 ) {
-    val todayHours = vm.todaySeconds(now) / 3600.0
     // 累计:所有 item 的 seconds 之和(含在跑)
     val totalSecs = state.subjects.sumOf { s ->
         s.items.sumOf { it -> vm.itemSeconds(it, now) }
@@ -40,7 +40,7 @@ fun TodayTotalRow(
                 Text("今日", color = ColorMuted, fontSize = 12.sp)
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "%.1fh".format(todayHours),
+                    hm(vm.todaySeconds(now)),
                     color = ColorGood,
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold

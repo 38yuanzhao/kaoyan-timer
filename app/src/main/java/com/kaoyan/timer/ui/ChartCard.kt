@@ -16,6 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kaoyan.timer.KaoyanViewModel
+import com.kaoyan.timer.util.hmc
 import androidx.compose.material3.Text
 
 private val PastBar = ColorMuted.copy(alpha = 0.40f)
@@ -61,10 +62,9 @@ fun ChartCard(
                 val color: Color = if (bar.today) ColorGood else PastBar
                 drawRoundedBar(left, top, barWidth, barH, color)
 
-                val hours = bar.secs / 3600.0
-                if (hours > 0.0) {
+                if (bar.secs > 0.0) {
                     drawNativeText(
-                        "%.1f".format(hours),
+                        hmc(bar.secs),
                         cx,
                         labelTopPx + (chartHeight - barH) - 6f * density,
                         ColorFg.toArgb(),
