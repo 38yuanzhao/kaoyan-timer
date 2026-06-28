@@ -41,7 +41,7 @@
 
 ## 更新
 
-最新 **v2.3** 新增了番茄钟「任务拆解链 + 自定义时长 + 超时正计时」(见上方功能亮点)。历史版本见 [Releases](https://github.com/38yuanzhao/kaoyan-timer/releases)。
+最新 **v2.4**:时间显示统一改为「X 分钟 / X 小时 Y 分钟」更直观(不再出现「0.8 小时」这种小数)、番茄钟记住上次选的子项、超时正计时在锁屏 / 息屏下也继续走(不再卡住)、背景噪音循环无缝。更早的 **v2.3** 新增了番茄钟「任务拆解链 + 自定义时长 + 超时正计时」(见上方功能亮点)。历史版本见 [Releases](https://github.com/38yuanzhao/kaoyan-timer/releases)。
 
 ## 开发者:本地构建与技术栈
 
@@ -66,7 +66,7 @@
 - 语言:Kotlin 1.9.24
 - UI:Jetpack Compose + Material3(Compose BOM 2024.06.00,Compose Compiler 1.5.14),石墨蓝深色主题;底部 NavigationBar 分屏(状态切换,未引入 Navigation-Compose)
 - 构建:Gradle 8.7,AGP 8.5.2,Kotlin DSL
-- SDK:minSdk 24,compileSdk 36,targetSdk 34;当前 versionName 2.3 / versionCode 5
+- SDK:minSdk 24,compileSdk 36,targetSdk 34;当前 versionName 2.4 / versionCode 6
 - 持久化:SharedPreferences + kotlinx.serialization(JSON,1.6.3)
 - 备份 / 同步:SAF(CreateDocument / OpenDocument)导出 / 导入 AppState 的 JSON
 - 番茄运行保活:前台服务 `PomodoroService`(specialUse)+ 常驻通知,锁屏 / 后台继续计时与自动接力
