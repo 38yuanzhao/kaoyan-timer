@@ -7,6 +7,7 @@ plugins {
 android {
     namespace = "com.kaoyan.timer"
     compileSdk = 36
+    // 本机只装了 build-tools 35/36.x、cmdline-tools 为空,钉死已装版本,避免 AGP 回落到 34 触发联网补装(见 memory android-build-env)
     buildToolsVersion = "35.0.0"
 
     defaultConfig {
@@ -35,10 +36,6 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
             // ponytail: 有 keystore(环境变量注入)才正式签名;无 env 时产出 unsigned 包
             if (System.getenv("KEYSTORE_FILE") != null) {
                 signingConfig = signingConfigs.getByName("release")

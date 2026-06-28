@@ -34,9 +34,6 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     private val _now = MutableStateFlow(System.currentTimeMillis())
     val now: StateFlow<Long> = _now.asStateFlow()
 
-    // itemId -> Item 的索引,结构变化后重建
-    private var itemById: Map<String, Item> = buildIndex(_state.value)
-
     // 前台服务是否已开,避免每秒重复 startForegroundService
     private var pomoServiceOn = false
 
@@ -89,48 +86,22 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------
     // 内部工具
     // ---------------------------------------------------------------
-    private fun buildIndex(s: AppState): Map<String, Item> {
-        val m = HashMap<String, Item>()
-        for (sub in s.subjects) for (it in sub.items) m[it.id] = it
-        return m
-    }
-
-    /** 任何修改后:重建索引、发布新引用、持久化。 */
+    /** 任何修改后:发布新引用、持久化。 */
     private fun publish(s: AppState) {
-        itemById = buildIndex(s)
         _state.value = s
         store.save(s)
     }
 
     /** 复制当前 state(深拷贝 subjects/items 以便修改可变字段后发布新引用)。 */
-    private fun copyState(src: AppState): AppState {
-        val newSubjects = src.subjects.map { sub ->
-            Subject(
-                name = sub.name,
-                items = sub.items.map { it ->
-                    Item(
-                        id = it.id,
-                        name = it.name,
-                        seconds = it.seconds,
-                        runningSince = it.runningSince,
-                        subtasks = it.subtasks.map { st -> st.copy() } // 深拷贝:Subtask.done 可变,必须新实例
-                    )
-                }
-            )
-        }
-        return AppState(
-            examDate = src.examDate,
-            startDate = src.startDate,
-            subjects = newSubjects,
-            daily = HashMap(src.daily),
-            dailySub = HashMap(src.dailySub.mapValues { HashMap(it.value) }),
-            pomo = src.pomo?.let { Pomo(it.itemId, it.phase, it.startAt, it.endsAt, it.pausedAt, it.subtaskId) },
-            focusMin = src.focusMin,
-            breakMin = src.breakMin,
-            template = src.template,
-            sel = HashMap(src.sel)
-        )
-    }
+    private fun copyState(src: AppState): AppState = src.copy(
+        subjects = src.subjects.map { sub ->
+            sub.copy(items = sub.items.map { it -> it.copy(subtasks = it.subtasks.map { st -> st.copy() }) })
+        },
+        daily = src.daily.toMutableMap(),
+        dailySub = src.dailySub.mapValues { it.value.toMutableMap() }.toMutableMap(),
+        pomo = src.pomo?.copy(),
+        sel = src.sel.toMutableMap()
+    )
 
     /** 结算秒数:同时记到当日总时长 daily 与当日该科 dailySub。subject 为空则只记总量。 */
     private fun addDaily(s: AppState, key: String, secs: Double, subject: String) {
@@ -171,9 +142,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------
     fun applyTemplate(key: String) {
         val s = copyState(_state.value)
-        val tpl = Templates.all[key] ?: return
-        @Suppress("UNUSED_VARIABLE")
-        val unused = tpl
+        if (key !in Templates.all) return
         val newState = AppState(
             examDate = s.examDate,
             startDate = s.startDate,
@@ -192,7 +161,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleItem(id: String) {
         val s = copyState(_state.value)
         val now = System.currentTimeMillis()
-        val item = s.subjects.flatMap { it.items }.firstOrNull { it.id == id } ?: return
+        val item = findItem(s, id) ?: return
         val rs = item.runningSince
         if (rs == null) {
             // 开始
@@ -212,7 +181,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     fun manualAdd(id: String, minutes: Double) {
         val s = copyState(_state.value)
         val now = System.currentTimeMillis()
-        val item = s.subjects.flatMap { it.items }.firstOrNull { it.id == id } ?: return
+        val item = findItem(s, id) ?: return
         val secs = minutes * 60.0
         item.seconds = (item.seconds + secs).coerceAtLeast(0.0)
         addDaily(s, TimeUtil.todayKey(now), secs, subjectNameOf(s, id))
