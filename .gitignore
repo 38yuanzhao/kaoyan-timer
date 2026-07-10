@@ -15,6 +15,7 @@ sw.js
 
 # Local configuration
 local.properties
+.tools/
 
 # Native build
 .cxx/

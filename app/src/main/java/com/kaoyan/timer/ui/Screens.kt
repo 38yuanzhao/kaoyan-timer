@@ -58,6 +58,7 @@ import com.kaoyan.timer.util.TimeUtil
 import com.kaoyan.timer.util.fmt
 import com.kaoyan.timer.util.hm
 import com.kaoyan.timer.util.mmss
+import kotlin.math.roundToInt
 
 @Composable
 private fun screenModifier() = Modifier
@@ -155,16 +156,48 @@ private fun HeroCountdown(vm: KaoyanViewModel, state: AppState, now: Long) {
 private fun StatTilesGrid(vm: KaoyanViewModel, state: AppState, now: Long) {
     val pct = vm.progressPct(now)
     val total = state.subjects.sumOf { s -> s.items.sumOf { vm.itemSeconds(it, now) } }
-    val streak = computeStreak(state, now)
+    val todayKey = TimeUtil.todayKey(now)
+    val hasLiveTiming = remember(state.subjects, state.pomo) {
+        state.subjects.any { subject -> subject.items.any { it.runningSince != null } } ||
+            state.pomo?.let { pomo ->
+                pomo.pausedAt == null && (pomo.phase == "focus" || pomo.phase == "overtime")
+            } == true
+    }
+    // 无在途计时时不随秒级时钟重算；跨午夜运行时仍通过 daySeconds 得到准确连续天数。
+    val streakTick = if (hasLiveTiming) now else 0L
+    val streak = remember(state.daily, state.subjects, state.pomo, todayKey, streakTick) {
+        computeStreak(vm, now)
+    }
+    // 设了每日目标:今日投入 tile 显示目标完成环,达标转青绿
+    val goalSecs = state.dailyGoalMin * 60.0
+    val todaySecs = vm.todaySeconds(now)
+    val goalRatio = if (goalSecs > 0) (todaySecs / goalSecs).toFloat() else null
+    val goalReached = goalRatio != null && goalRatio >= 1f
+    val roundedPct = pct.roundToInt()
+    val totalHours = (total / 3600).toInt()
+    val todayMinutes = (todaySecs / 60).toLong()
+    val progressText = remember(roundedPct) { "$roundedPct%" }
+    val totalText = remember(totalHours) { "${totalHours}h" }
+    val todayText = remember(todayMinutes) { hm(todaySecs) }
+    val goalTitle = remember(state.dailyGoalMin) {
+        if (goalSecs > 0) "今日 / 目标 ${hm(goalSecs)}" else "今日投入"
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            StatTile("备考进度", "%.0f%%".format(pct), ColorGood, ring = pct / 100f, modifier = Modifier.weight(1f))
-            StatTile("今日投入", hm(vm.todaySeconds(now)), ColorGood, modifier = Modifier.weight(1f))
+            StatTile("备考进度", progressText, ColorGood, ring = pct / 100f, modifier = Modifier.weight(1f))
+            StatTile(
+                goalTitle,
+                todayText,
+                if (goalReached) ColorAccent2 else ColorGood,
+                ring = goalRatio,
+                ringColor = if (goalReached) ColorAccent2 else ColorGood,
+                modifier = Modifier.weight(1f)
+            )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             StatTile("连续天数", "$streak 天", ColorGood, emoji = "🔥", modifier = Modifier.weight(1f))
-            StatTile("累计时长", "${(total / 3600).toInt()}h", ColorFg, modifier = Modifier.weight(1f))
+            StatTile("累计时长", totalText, ColorFg, modifier = Modifier.weight(1f))
         }
     }
 }
@@ -176,6 +209,7 @@ private fun StatTile(
     valueColor: Color,
     modifier: Modifier = Modifier,
     ring: Float? = null,
+    ringColor: Color = ColorGood,
     emoji: String? = null
 ) {
     Card(
@@ -204,20 +238,19 @@ private fun StatTile(
                     modifier = Modifier.weight(1f)
                 )
                 if (ring != null) {
-                    RingProgress(ring, ColorGood, modifier = Modifier.size(36.dp), strokeWidth = 5.dp)
+                    RingProgress(ring, ringColor, modifier = Modifier.size(36.dp), strokeWidth = 5.dp)
                 }
             }
         }
     }
 }
 
-/** 连续天数:从今天往回数连续学习(daily>0)的天数;今日未学习不算断,从昨天接着数。纯 UI 派生,零新 API。 */
-private fun computeStreak(state: AppState, now: Long): Int {
+/** 连续天数：从今天往回数；今日未学习不算断，跨午夜在途时长按实际归属日计算。 */
+private fun computeStreak(vm: KaoyanViewModel, now: Long): Int {
     var streak = 0
     var i = 0
-    if ((state.daily[TimeUtil.dayKeyOffset(now, 0)] ?: 0.0) <= 0.0) i = 1
-    // ponytail: 上限按 daily 实际天数,够用;不引入额外缓存
-    while ((state.daily[TimeUtil.dayKeyOffset(now, i)] ?: 0.0) > 0.0) {
+    if (vm.daySeconds(TimeUtil.dayKeyOffset(now, 0), now) <= 0.0) i = 1
+    while (vm.daySeconds(TimeUtil.dayKeyOffset(now, i), now) > 0.0) {
         streak++
         i++
     }
@@ -394,13 +427,27 @@ fun FocusModeScreen(
 // ── Tab 2:数据 ──────────────────────────────────────────────────
 @Composable
 fun DataScreen(vm: KaoyanViewModel, state: AppState, now: Long) {
+    val todayKey = TimeUtil.todayKey(now)
+    val yesterdayKey = TimeUtil.dayKeyOffset(now, 1)
+    val sessionLogSnapshot = remember(state.sessions) {
+        SessionLogSnapshot.from(state.sessions)
+    }
+    val onDeleteSession: (String) -> Unit = remember(vm) { vm::deleteSession }
+
     Column(
         modifier = screenModifier().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Spacer(Modifier.height(6.dp))
         ChartCard(vm, now)
+        HeatmapCard(vm, state, now)
         SubjectPieCard(vm, state, now)
+        SessionLogCard(
+            snapshot = sessionLogSnapshot,
+            todayKey = todayKey,
+            yesterdayKey = yesterdayKey,
+            onDeleteSession = onDeleteSession
+        )
         TodayTotalRow(vm, state, now)
         Spacer(Modifier.height(12.dp))
     }
@@ -432,8 +479,41 @@ fun SettingsScreen(vm: KaoyanViewModel, state: AppState) {
                 WheelMinutePicker("休息(分)", state.breakMin, 1..60, true, { vm.setBreakMin(it) }, Modifier.weight(1f))
             }
         }
+        DailyGoalCard(vm, state)
         BackupCard(vm)
         Spacer(Modifier.height(12.dp))
+    }
+}
+
+/** 每日目标时长:半小时一档的滚轮,0=不设目标;设置后仪表盘「今日投入」变成目标完成环。 */
+@Composable
+private fun DailyGoalCard(vm: KaoyanViewModel, state: AppState) {
+    // 0(关) + 0.5h..16h,半小时一档
+    val labels = remember {
+        Array(33) { i ->
+            if (i == 0) "不设目标"
+            else {
+                val m = i * 30
+                if (m % 60 == 0) "${m / 60}小时" else "${m / 60}小时30分"
+            }
+        }
+    }
+    SectionCard {
+        SectionTitle("每日目标时长")
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "设定后,仪表盘「今日投入」会显示目标完成进度。",
+            color = ColorMuted,
+            fontSize = 13.sp
+        )
+        Spacer(Modifier.height(4.dp))
+        WheelLabelPicker(
+            label = "",
+            index = (state.dailyGoalMin / 30).coerceIn(0, labels.size - 1),
+            labels = labels,
+            onChange = { vm.setDailyGoalMin(it * 30) },
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 
