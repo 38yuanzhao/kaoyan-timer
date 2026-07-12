@@ -1,5 +1,8 @@
 package com.kaoyan.timer.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -41,6 +44,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,13 +55,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.kaoyan.timer.KaoyanViewModel
 import com.kaoyan.timer.audio.AudioEngine
 import com.kaoyan.timer.model.AppState
+import com.kaoyan.timer.util.AppUpdate
 import com.kaoyan.timer.util.TimeUtil
 import com.kaoyan.timer.util.fmt
 import com.kaoyan.timer.util.hm
 import com.kaoyan.timer.util.mmss
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 @Composable
@@ -481,7 +490,59 @@ fun SettingsScreen(vm: KaoyanViewModel, state: AppState) {
         }
         DailyGoalCard(vm, state)
         BackupCard(vm)
+        CheckUpdateCard()
         Spacer(Modifier.height(12.dp))
+    }
+}
+
+/** 检查 GitHub latest release,有新版则 DownloadManager 拉 APK。 */
+@Composable
+private fun CheckUpdateCard() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var checking by remember { mutableStateOf(false) }
+    val startCheck = {
+        if (!checking) {
+            checking = true
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    AppUpdate.check(context.applicationContext)
+                }
+                Toast.makeText(context, result.message, Toast.LENGTH_SHORT).show()
+                checking = false
+            }
+        }
+    }
+    val storagePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) startCheck()
+        else Toast.makeText(context, "需要存储权限才能下载更新", Toast.LENGTH_SHORT).show()
+    }
+
+    SectionCard {
+        SectionTitle("检查更新")
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "从 GitHub 获取最新版本;有新版时下载 APK 到系统「下载」目录。",
+            color = ColorMuted,
+            fontSize = 13.sp
+        )
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = {
+                if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+                    PackageManager.PERMISSION_GRANTED
+                ) storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                else startCheck()
+            },
+            enabled = !checking,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = ColorAccent2, contentColor = ColorBg)
+        ) {
+            Text(if (checking) "检查中…" else "检查更新")
+        }
     }
 }
 
