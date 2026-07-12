@@ -45,7 +45,7 @@
 
 ## 更新
 
-最新 **v2.5**:新增每日学习目标与仪表盘进度环、月度学习热力图、可删除回滚的学习记录明细,以及显示初试倒计时 / 今日实时投入的桌面小组件;同时修正跨日计时与统计一致性。更早的 **v2.4** 优化了时间显示、番茄子项记忆、息屏超时正计时和背景噪音循环。历史版本见 [Releases](https://github.com/38yuanzhao/kaoyan-timer/releases)。
+最新 **v2.6**:在设置页新增 GitHub 检查更新与 APK 下载,支持版本号正确比较、可信下载地址校验和 Android 7–9 存储权限处理。更早的 **v2.5** 新增每日学习目标、月度热力图、学习记录明细和桌面小组件。历史版本见 [Releases](https://github.com/38yuanzhao/kaoyan-timer/releases)。
 
 ## 开发者:本地构建与技术栈
 
@@ -70,7 +70,7 @@
 - 语言:Kotlin 1.9.24
 - UI:Jetpack Compose + Material3(Compose BOM 2024.06.00,Compose Compiler 1.5.14),石墨蓝深色主题;底部 NavigationBar 分屏(状态切换,未引入 Navigation-Compose)
 - 构建:Gradle 8.7,AGP 8.5.2,Kotlin DSL
-- SDK:minSdk 24,compileSdk 36,targetSdk 34;当前 versionName 2.5 / versionCode 7
+- SDK:minSdk 24,compileSdk 36,targetSdk 34;当前 versionName 2.6 / versionCode 8
 - 持久化:SharedPreferences + kotlinx.serialization(JSON,1.6.3)
 - 备份 / 同步:SAF(CreateDocument / OpenDocument)导出 / 导入 AppState 的 JSON
 - 番茄运行保活:前台服务 `PomodoroService`(specialUse)+ 常驻通知,锁屏 / 后台继续计时与自动接力
