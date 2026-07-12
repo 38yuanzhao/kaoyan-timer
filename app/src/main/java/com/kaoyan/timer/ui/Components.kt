@@ -129,6 +129,40 @@ fun WheelMinutePicker(
     }
 }
 
+/** 滚轮选择(自定义档位文案):NumberPicker 的 displayedValues 版,给每日目标等非纯数字档位用。 */
+@Composable
+fun WheelLabelPicker(
+    label: String,
+    index: Int,
+    labels: Array<String>,
+    onChange: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(label, color = ColorMuted, fontSize = 13.sp)
+        androidx.compose.foundation.layout.Spacer(Modifier.padding(top = 3.dp))
+        AndroidView(
+            factory = { ctx ->
+                NumberPicker(ctx).apply {
+                    minValue = 0
+                    displayedValues = labels // 先设文案再设 maxValue,否则档位数不匹配会崩
+                    maxValue = labels.size - 1
+                    value = index.coerceIn(0, labels.size - 1)
+                    wrapSelectorWheel = false
+                    setOnValueChangedListener { _, _, newVal -> onChange(newVal) }
+                }
+            },
+            update = { picker ->
+                val v = index.coerceIn(0, labels.size - 1)
+                if (picker.value != v) picker.value = v
+            }
+        )
+    }
+}
+
 /** 手动加时间对话框,分钟数(可负) */
 @Composable
 fun ManualAddDialog(

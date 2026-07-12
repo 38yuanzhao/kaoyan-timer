@@ -5,21 +5,34 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.kaoyan.timer.audio.AudioEngine
 import com.kaoyan.timer.data.Store
+import com.kaoyan.timer.data.copySessionLedger
+import com.kaoyan.timer.data.recordSessionAndReplay
+import com.kaoyan.timer.data.rebuildSessionAggregates
+import com.kaoyan.timer.data.removeSessionAndReplay
+import com.kaoyan.timer.data.runningIntervalsExcept
 import com.kaoyan.timer.model.AppState
 import com.kaoyan.timer.model.Item
 import com.kaoyan.timer.model.Pomo
 import com.kaoyan.timer.model.Subject
+import com.kaoyan.timer.model.Session
 import com.kaoyan.timer.model.Subtask
 import com.kaoyan.timer.model.Templates
 import com.kaoyan.timer.service.PomodoroService
+import com.kaoyan.timer.widget.CountdownWidget
 import com.kaoyan.timer.util.TimeUtil
+import com.kaoyan.timer.util.applyNonNegativeDelta
+import com.kaoyan.timer.util.focusIntervalsUntil
+import com.kaoyan.timer.util.focusedSecondsUntil
 import com.kaoyan.timer.util.mmss
+import com.kaoyan.timer.util.pausePomoAt
+import com.kaoyan.timer.util.resumePomoAt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.Calendar
+import java.util.UUID
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
@@ -97,10 +110,11 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------
     // 内部工具
     // ---------------------------------------------------------------
-    /** 任何修改后:发布新引用、持久化。 */
+    /** 任何修改后:发布新引用、持久化、刷新桌面小组件。 */
     private fun publish(s: AppState) {
         _state.value = s
         store.save(s)
+        CountdownWidget.updateAll(getApplication())
     }
 
     /** 复制当前 state(深拷贝 subjects/items 以便修改可变字段后发布新引用)。 */
@@ -112,18 +126,87 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         daily = src.daily.toMutableMap(),
         dailySub = src.dailySub.mapValues { it.value.toMutableMap() }.toMutableMap(),
         pomo = src.pomo?.copy(),
-        sel = src.sel.toMutableMap()
+        sel = src.sel.toMutableMap(),
+        sessions = src.sessions.toMutableList(), // Session 不可变,浅拷贝即可
+        sessionLedger = copySessionLedger(src.sessionLedger)
     )
 
-    /** 结算秒数:同时记到当日总时长 daily 与当日该科 dailySub。subject 为空则只记总量。 */
-    private fun addDaily(s: AppState, key: String, secs: Double, subject: String) {
-        val cur = s.daily[key] ?: 0.0
-        s.daily[key] = (cur + secs).coerceAtLeast(0.0)
-        if (subject.isNotEmpty()) {
-            val m = s.dailySub.getOrPut(key) { mutableMapOf() }
-            m[subject] = ((m[subject] ?: 0.0) + secs).coerceAtLeast(0.0)
-        }
+    /**
+     * 记一条学习明细。所有把秒数结算进 item.seconds/daily 的地方都应同步调用,
+     * 保证「明细之和 ≈ 聚合值」。列表新在前,超过上限丢最旧的。
+     */
+    private fun logSession(
+        s: AppState,
+        itemId: String,
+        startAt: Long,
+        endAt: Long,
+        secs: Double,
+        kind: String,
+        dayKey: String = TimeUtil.todayKey(startAt),
+        itemDeltaSecs: Double? = null,
+        dailyDeltaSecs: Double? = null,
+        subjectDeltaSecs: Double? = null,
+        requestedDeltaSecs: Double? = null
+    ) {
+        val deltas = listOf(itemDeltaSecs, dailyDeltaSecs, subjectDeltaSecs)
+        if (secs == 0.0 && deltas.all { it == null || it == 0.0 }) return
+        val item = findItem(s, itemId)
+        recordSessionAndReplay(
+            s,
+            Session(
+                id = UUID.randomUUID().toString(),
+                startAt = startAt,
+                endAt = endAt,
+                secs = secs,
+                subject = subjectNameOf(s, itemId),
+                itemId = itemId,
+                itemName = item?.name ?: "",
+                kind = kind,
+                dayKey = dayKey,
+                itemDeltaSecs = itemDeltaSecs,
+                dailyDeltaSecs = dailyDeltaSecs,
+                subjectDeltaSecs = subjectDeltaSecs,
+                requestedDeltaSecs = requestedDeltaSecs,
+                itemGenerationId = s.itemGenerationId
+            ),
+            MAX_SESSIONS
+        )
     }
+
+    /**
+     * Settle one continuous timed interval. Item total receives the whole duration,
+     * while daily aggregates and persisted detail are split at local midnight.
+     */
+    private fun settleTimedSession(
+        s: AppState,
+        itemId: String,
+        startAt: Long,
+        endAt: Long,
+        kind: String
+    ): Double {
+        findItem(s, itemId) ?: return 0.0
+        val slices = TimeUtil.splitByLocalDay(startAt, endAt)
+        val elapsed = slices.sumOf { it.seconds }
+        if (elapsed <= 0.0) return 0.0
+        for (slice in slices) {
+            logSession(
+                s = s,
+                itemId = itemId,
+                startAt = slice.startAt,
+                endAt = slice.endAt,
+                secs = slice.seconds,
+                kind = kind,
+                dayKey = slice.dayKey,
+                requestedDeltaSecs = slice.seconds
+            )
+        }
+        return elapsed
+    }
+
+    private fun settlePomoSession(s: AppState, pomo: Pomo, endAt: Long, kind: String): Double =
+        pomo.focusIntervalsUntil(endAt).sumOf { segment ->
+            settleTimedSession(s, pomo.itemId, segment.startAt, segment.endAt, kind)
+        }
 
     /** 找 itemId 所属科目名,用于按科记账。 */
     private fun subjectNameOf(s: AppState, itemId: String): String =
@@ -140,11 +223,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     private fun settleAllRunning(s: AppState, now: Long) {
         for (sub in s.subjects) for (it in sub.items) {
             val rs = it.runningSince ?: continue
-            val elapsed = (now - rs) / 1000.0
-            if (elapsed > 0) {
-                it.seconds += elapsed
-                addDaily(s, TimeUtil.todayKey(now), elapsed, sub.name)
-            }
+            settleTimedSession(s, it.id, rs, now, "timer")
             it.runningSince = null
         }
     }
@@ -166,8 +245,13 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             breakMin = s.breakMin,
             template = key,
             sel = HashMap(),
-            lastPomoItemId = null // 换模板后子项 id 全变,重置番茄选择
+            lastPomoItemId = null, // 换模板后子项 id 全变,重置番茄选择
+            dailyGoalMin = s.dailyGoalMin,
+            sessions = s.sessions.toMutableList(), // 明细冗余存了科目/子项名,换模板后仍可读
+            itemGenerationId = UUID.randomUUID().toString(),
+            sessionLedger = copySessionLedger(s.sessionLedger)
         )
+        rebuildSessionAggregates(newState)
         publish(newState)
     }
 
@@ -177,15 +261,15 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         val item = findItem(s, id) ?: return
         val rs = item.runningSince
         if (rs == null) {
-            // 开始
+            // 全局只允许一个秒表；先结算并停止其它子项，再启动当前项。
+            for (interval in runningIntervalsExcept(s.subjects, id, now)) {
+                settleTimedSession(s, interval.itemId, interval.startAt, interval.endAt, "timer")
+                findItem(s, interval.itemId)?.runningSince = null
+            }
             item.runningSince = now
         } else {
             // 停止:结算
-            val elapsed = (now - rs) / 1000.0
-            if (elapsed > 0) {
-                item.seconds += elapsed
-                addDaily(s, TimeUtil.todayKey(now), elapsed, subjectNameOf(s, id))
-            }
+            settleTimedSession(s, id, rs, now, "timer")
             item.runningSince = null
         }
         publish(s)
@@ -195,9 +279,32 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         val s = copyState(_state.value)
         val now = System.currentTimeMillis()
         val item = findItem(s, id) ?: return
-        val secs = minutes * 60.0
-        item.seconds = (item.seconds + secs).coerceAtLeast(0.0)
-        addDaily(s, TimeUtil.todayKey(now), secs, subjectNameOf(s, id))
+        val requestedSecs = minutes * 60.0
+        val itemAdjustment = applyNonNegativeDelta(item.seconds, requestedSecs)
+        val key = TimeUtil.todayKey(now)
+        val subject = subjectNameOf(s, id)
+        val dailyAdjustment = applyNonNegativeDelta(s.daily[key] ?: 0.0, requestedSecs)
+        val subjectAdjustment = if (subject.isNotEmpty()) {
+            applyNonNegativeDelta(s.dailySub[key]?.get(subject) ?: 0.0, requestedSecs)
+        } else null
+        val displayDelta = listOfNotNull(
+            itemAdjustment.delta,
+            dailyAdjustment.delta,
+            subjectAdjustment?.delta
+        ).firstOrNull { it != 0.0 } ?: return
+        logSession(
+            s = s,
+            itemId = id,
+            startAt = now,
+            endAt = now,
+            secs = displayDelta,
+            kind = "manual",
+            dayKey = key,
+            itemDeltaSecs = itemAdjustment.delta,
+            dailyDeltaSecs = dailyAdjustment.delta,
+            subjectDeltaSecs = subjectAdjustment?.delta ?: 0.0,
+            requestedDeltaSecs = requestedSecs
+        )
         publish(s)
     }
 
@@ -218,11 +325,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             for (it in subject.items) {
                 val rs = it.runningSince
                 if (rs != null) {
-                    val elapsed = (now - rs) / 1000.0
-                    if (elapsed > 0) {
-                        it.seconds += elapsed
-                        addDaily(s, TimeUtil.todayKey(now), elapsed, subject.name)
-                    }
+                    settleTimedSession(s, it.id, rs, now, "timer")
                     it.runningSince = null
                 }
             }
@@ -247,7 +350,9 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             itemId = itemId,
             phase = "focus",
             startAt = now,
-            endsAt = now + focusMs
+            endsAt = now + focusMs,
+            focusSegments = emptyList(),
+            activeFocusStartedAt = now
         )
         publish(s)
     }
@@ -271,7 +376,9 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             phase = "focus",
             startAt = now,
             endsAt = now + focusMs,
-            subtaskId = st.id
+            subtaskId = st.id,
+            focusSegments = emptyList(),
+            activeFocusStartedAt = now
         )
         publish(s)
     }
@@ -289,11 +396,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         if (p != null && p.subtaskId == subtaskId && (p.phase == "focus" || p.phase == "overtime")) {
             // 结算已专注(含超时):focus 封顶到 endsAt;overtime 算到 now
             val end = p.pausedAt ?: if (p.phase == "overtime") now else minOf(now, p.endsAt)
-            val elapsed = (end - p.startAt) / 1000.0
-            if (elapsed > 0) {
-                item.seconds += elapsed
-                addDaily(s, TimeUtil.todayKey(end), elapsed, subjectNameOf(s, itemId))
-            }
+            val elapsed = settlePomoSession(s, p, end, "chain")
             st.done = true
             val next = nextUndoneSubtask(item)
             if (next != null) {
@@ -317,21 +420,16 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         val now = System.currentTimeMillis()
         // 超时正计时无 endsAt 上限,冻结在 now;focus/break 封顶到 endsAt
         val freeze = if (cur.phase == "overtime") now else minOf(now, cur.endsAt)
-        s.pomo = s.pomo?.copy(pausedAt = freeze)
+        s.pomo = s.pomo?.let { pausePomoAt(it, freeze) }
         publish(s)
     }
 
     fun resumePomo() {
         val cur = _state.value.pomo ?: return
-        val pausedAt = cur.pausedAt ?: return
+        if (cur.pausedAt == null) return
         val s = copyState(_state.value)
         val now = System.currentTimeMillis()
-        val delta = now - pausedAt
-        s.pomo = s.pomo?.copy(
-            startAt = cur.startAt + delta,
-            endsAt = cur.endsAt + delta,
-            pausedAt = null
-        )
+        s.pomo = s.pomo?.let { resumePomoAt(it, now) }
         publish(s)
     }
 
@@ -342,14 +440,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             // 中途停止也结算已专注时间(含超时;暂停时取冻结点),避免白干
             val now = System.currentTimeMillis()
             val end = p.pausedAt ?: if (p.phase == "overtime") now else minOf(now, p.endsAt)
-            val elapsed = (end - p.startAt) / 1000.0
-            if (elapsed > 0) {
-                val item = findItem(s, p.itemId)
-                if (item != null) {
-                    item.seconds += elapsed
-                    addDaily(s, TimeUtil.todayKey(end), elapsed, subjectNameOf(s, p.itemId))
-                }
-            }
+            settlePomoSession(s, p, end, if (p.subtaskId != null) "chain" else "pomo")
         }
         // 停止=正常停止:保留拆解链(含已完成进度),下次可继续;只有整条链跑完才清空
         s.pomo = null
@@ -380,6 +471,22 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         publish(st)
     }
 
+    fun setDailyGoalMin(v: Int) {
+        val st = copyState(_state.value)
+        st.dailyGoalMin = v.coerceAtLeast(0)
+        publish(st)
+    }
+
+    /**
+     * 删除一条学习明细,并把它的秒数从聚合值(item.seconds / daily / dailySub)里回滚,
+     * 用于修正误计时。子项名对不上(换过模板)时只回滚 daily/dailySub,不动新子项的时长。
+     */
+    fun deleteSession(sessionId: String) {
+        val s = copyState(_state.value)
+        removeSessionAndReplay(s, sessionId) ?: return
+        publish(s)
+    }
+
     // ---------------------------------------------------------------
     // tickPomo / reconcile
     // ---------------------------------------------------------------
@@ -395,21 +502,10 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             if (p.subtaskId != null) {
                 // 拆解链:预估时间到 → 转超时正计时(不结算、不标完成),响铃提示
                 audio.beep()
-                s.pomo = Pomo(
-                    itemId = p.itemId,
-                    phase = "overtime",
-                    startAt = p.startAt, // 保留原起点,完成时按 now-startAt 结算总时长
-                    endsAt = p.endsAt,   // 预估到点时刻,用于显示超时 +mm:ss
-                    subtaskId = p.subtaskId
-                )
+                s.pomo = p.copy(phase = "overtime")
             } else {
                 // 普通番茄:结算 focus → 休息
-                val item = findItem(s, p.itemId)
-                val focusSecs = (p.endsAt - p.startAt) / 1000.0
-                if (item != null && focusSecs > 0) {
-                    item.seconds += focusSecs
-                    addDaily(s, TimeUtil.todayKey(p.endsAt), focusSecs, subjectNameOf(s, p.itemId))
-                }
+                settlePomoSession(s, p, p.endsAt, "pomo")
                 audio.beep()
                 val breakMs = s.breakMin.toLong() * 60_000L
                 s.pomo = Pomo(p.itemId, "break", p.endsAt, p.endsAt + breakMs)
@@ -425,7 +521,9 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
                     phase = "focus",
                     startAt = now,
                     endsAt = now + next.estMin.toLong() * 60_000L,
-                    subtaskId = next.id
+                    subtaskId = next.id,
+                    focusSegments = emptyList(),
+                    activeFocusStartedAt = now
                 )
             } else {
                 // 一次性:整条链跑完即清空小任务,下次需重新拆解
@@ -447,12 +545,7 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         val p = s.pomo ?: return
         if (p.phase == "focus" || p.phase == "overtime") {
             // 安全降级:overtime 无法知道实际跑多久,只补记到预估到点(endsAt);不标完成。
-            val item = findItem(s, p.itemId)
-            val focusSecs = (p.endsAt - p.startAt) / 1000.0
-            if (item != null && focusSecs > 0) {
-                item.seconds += focusSecs
-                addDaily(s, TimeUtil.todayKey(p.endsAt), focusSecs, subjectNameOf(s, p.itemId))
-            }
+            settlePomoSession(s, p, p.endsAt, if (p.subtaskId != null) "chain" else "pomo")
         }
         // 不重放后续链、不标完成、不清空拆解:链保留,重开后从清单条继续下一个未完成的小任务。
         s.pomo = null
@@ -473,24 +566,44 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         return sum
     }
 
-    /** 所有在跑 item 的在途秒数 + pomo focus 在途秒数。 */
+    /** 所有在跑 item 的在途秒数 + pomo focus/overtime 在途秒数。 */
     fun liveExtra(now: Long): Double {
         val s = _state.value
         var extra = 0.0
         for (sub in s.subjects) for (it in sub.items) {
             val rs = it.runningSince
-            if (rs != null) extra += (now - rs) / 1000.0
+            if (rs != null && now > rs) extra += (now - rs) / 1000.0
         }
         val pomo = s.pomo
-        if (pomo != null && pomo.phase == "focus") {
-            val cappedNow = pomo.pausedAt ?: minOf(now, pomo.endsAt)
-            val elapsed = (cappedNow - pomo.startAt) / 1000.0
+        if (pomo != null && (pomo.phase == "focus" || pomo.phase == "overtime")) {
+            val cappedNow = activePomoEnd(pomo, now)
+            val elapsed = pomo.focusedSecondsUntil(cappedNow)
             if (elapsed > 0) extra += elapsed
         }
         return extra
     }
 
-    /** 某科当前在途秒数:该科在跑 item + (若 pomo focus 的 item 属于该科)番茄在途。 */
+    private fun activePomoEnd(pomo: Pomo, now: Long): Long =
+        pomo.pausedAt ?: if (pomo.phase == "overtime") now else minOf(now, pomo.endsAt)
+
+    /** In-flight seconds belonging to one local calendar date (may be before today). */
+    private fun liveExtraForDay(dayKey: String, now: Long): Double {
+        val s = _state.value
+        var extra = 0.0
+        for (sub in s.subjects) for (item in sub.items) {
+            val start = item.runningSince ?: continue
+            extra += TimeUtil.secondsOnLocalDay(start, now, dayKey)
+        }
+        val pomo = s.pomo
+        if (pomo != null && (pomo.phase == "focus" || pomo.phase == "overtime")) {
+            for (segment in pomo.focusIntervalsUntil(activePomoEnd(pomo, now))) {
+                extra += TimeUtil.secondsOnLocalDay(segment.startAt, segment.endAt, dayKey)
+            }
+        }
+        return extra
+    }
+
+    /** 某科当前在途秒数:该科在跑 item + (若 pomo focus/overtime 的 item 属于该科)番茄在途。 */
     private fun liveExtraForSubject(sub: Subject, now: Long): Double {
         var e = 0.0
         for (it in sub.items) {
@@ -498,12 +611,45 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             if (rs != null) e += (now - rs) / 1000.0
         }
         val pomo = _state.value.pomo
-        if (pomo != null && pomo.phase == "focus" && sub.items.any { it.id == pomo.itemId }) {
-            val cappedNow = pomo.pausedAt ?: minOf(now, pomo.endsAt)
-            val elapsed = (cappedNow - pomo.startAt) / 1000.0
+        if (pomo != null && (pomo.phase == "focus" || pomo.phase == "overtime") &&
+            sub.items.any { it.id == pomo.itemId }
+        ) {
+            val cappedNow = activePomoEnd(pomo, now)
+            val elapsed = pomo.focusedSecondsUntil(cappedNow)
             if (elapsed > 0) e += elapsed
         }
         return e
+    }
+
+    private fun liveExtraForSubjectOnDay(sub: Subject, dayKey: String, now: Long): Double {
+        var extra = 0.0
+        for (item in sub.items) {
+            val start = item.runningSince ?: continue
+            extra += TimeUtil.secondsOnLocalDay(start, now, dayKey)
+        }
+        val pomo = _state.value.pomo
+        if (pomo != null && (pomo.phase == "focus" || pomo.phase == "overtime") &&
+            sub.items.any { it.id == pomo.itemId }
+        ) {
+            for (segment in pomo.focusIntervalsUntil(activePomoEnd(pomo, now))) {
+                extra += TimeUtil.secondsOnLocalDay(segment.startAt, segment.endAt, dayKey)
+            }
+        }
+        return extra
+    }
+
+    /** 某日各科秒数;叠加属于该日的在途片段,供热力图点选详情。 */
+    fun daySubjectBreakdown(dayKey: String, now: Long): List<SubjectSlice> {
+        val s = _state.value
+        val totals = (s.dailySub[dayKey] ?: emptyMap()).toMutableMap()
+        // Merge current live data, but keep persisted names from templates that are no longer active.
+        for (sub in s.subjects) {
+            val live = liveExtraForSubjectOnDay(sub, dayKey, now)
+            if (live > 0.0) totals[sub.name] = (totals[sub.name] ?: 0.0) + live
+        }
+        return totals.map { (name, secs) -> SubjectSlice(name, secs) }
+            .filter { it.secs > 0.0 }
+            .sortedByDescending { it.secs }
     }
 
     data class SubjectSlice(val name: String, val secs: Double)
@@ -519,13 +665,28 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             "week" -> (0..6).map { TimeUtil.dayKeyOffset(now, it) }
             else -> emptyList()
         }
-        return s.subjects.map { sub ->
-            val settled = if (range == "all") {
-                sub.items.sumOf { it.seconds }
-            } else {
-                keys.sumOf { k -> s.dailySub[k]?.get(sub.name) ?: 0.0 }
+        val currentByName = s.subjects.associateBy { it.name }
+        val names = if (range == "all") {
+            currentByName.keys
+        } else {
+            buildSet {
+                addAll(currentByName.keys)
+                for (key in keys) addAll(s.dailySub[key]?.keys.orEmpty())
             }
-            SubjectSlice(sub.name, settled + liveExtraForSubject(sub, now))
+        }
+        return names.map { name ->
+            val sub = currentByName[name]
+            val settled = if (range == "all") {
+                sub?.items?.sumOf { it.seconds } ?: 0.0
+            } else {
+                keys.sumOf { k -> s.dailySub[k]?.get(name) ?: 0.0 }
+            }
+            val live = when {
+                sub == null -> 0.0
+                range == "all" -> liveExtraForSubject(sub, now)
+                else -> keys.sumOf { key -> liveExtraForSubjectOnDay(sub, key, now) }
+            }
+            SubjectSlice(name, settled + live)
         }
     }
 
@@ -547,10 +708,13 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun todaySeconds(now: Long): Double {
-        val s = _state.value
-        val base = s.daily[TimeUtil.todayKey(now)] ?: 0.0
-        return base + liveExtra(now)
+        val todayKey = TimeUtil.todayKey(now)
+        return daySeconds(todayKey, now)
     }
+
+    /** Settled plus in-flight seconds for any local date, including a running cross-midnight session. */
+    fun daySeconds(dayKey: String, now: Long): Double =
+        (_state.value.daily[dayKey] ?: 0.0) + liveExtraForDay(dayKey, now)
 
     data class CountInfo(val days: Int, val hours: Int, val diffMs: Long)
 
@@ -585,9 +749,10 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             val key = TimeUtil.dayKeyOffset(now, i)
             var secs = s.daily[key] ?: 0.0
             val isToday = key == todayK
-            if (isToday) secs += liveExtra(now)
+            secs += liveExtraForDay(key, now)
             val cal = Calendar.getInstance()
-            cal.timeInMillis = now - i.toLong() * TimeUtil.DAY_MS
+            cal.timeInMillis = now
+            cal.add(Calendar.DAY_OF_MONTH, -i)
             // Calendar.DAY_OF_WEEK: 周日=1..周六=7 -> 转成 0..6 (周日=0)
             val dow = cal.get(Calendar.DAY_OF_WEEK) - 1
             result.add(DayBar(secs = secs, dow = dow, today = isToday))
@@ -601,19 +766,19 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
     /** 导出此刻的干净快照:把在途时长结算进 seconds/daily,清掉运行中状态与 pomo。 */
     fun exportJson(): String {
         val now = System.currentTimeMillis()
-        val today = TimeUtil.todayKey(now)
         val s = copyState(_state.value)
-        // 趁 running/pomo 还在,先把今日各科在途折进 dailySub(与 daily[today] 一致)
-        val m = s.dailySub.getOrPut(today) { mutableMapOf() }
-        for (sub in _state.value.subjects) {
-            val extra = liveExtraForSubject(sub, now)
-            if (extra > 0) m[sub.name] = (m[sub.name] ?: 0.0) + extra
-        }
+        // Snapshot uses the same settlement path as normal stopping, so item totals,
+        // per-day aggregates and Session detail cannot diverge after import.
         for (sub in s.subjects) for (it in sub.items) {
-            it.seconds = itemSeconds(it, now)
+            val start = it.runningSince
+            if (start != null) settleTimedSession(s, it.id, start, now, "timer")
             it.runningSince = null
         }
-        s.daily[today] = todaySeconds(now)
+        val pomo = s.pomo
+        if (pomo != null && (pomo.phase == "focus" || pomo.phase == "overtime")) {
+            val end = activePomoEnd(pomo, now)
+            settlePomoSession(s, pomo, end, if (pomo.subtaskId != null) "chain" else "pomo")
+        }
         s.pomo = null
         return store.serialize(s)
     }
@@ -637,5 +802,9 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
             PomodoroService.stop(getApplication())
             pomoServiceOn = false
         }
+    }
+
+    companion object {
+        private const val MAX_SESSIONS = 500
     }
 }

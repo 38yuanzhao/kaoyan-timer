@@ -1,4 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">考研</string>
+    <string name="widget_label">距初试</string>
+    <string name="widget_days_unit">天</string>
+    <string name="widget_description">初试倒计时与今日学习投入</string>
+    <string name="widget_exam_label">距 %1$s 初试</string>
+    <string name="widget_today_format">今日 %s</string>
+    <string name="widget_today_goal_format">今日 %%s / %1$s</string>
+    <string name="widget_today_placeholder">今日 0:00</string>
+    <string name="widget_multiple_running_suffix"> · %1$d 项计时中</string>
+    <string name="widget_days_content_description">距离初试还有 %1$d 天</string>
+    <string name="widget_exam_date_unset">尚未设置有效的初试日期</string>
+    <string name="widget_today_content_description">今日已学习 %1$s</string>
+    <string name="widget_today_goal_content_description">今日已学习 %1$s，目标 %2$s</string>
+    <string name="session_delete_title">删除这条记录</string>
+    <string name="session_delete_confirm">删除</string>
+    <string name="session_delete_positive_message">“%1$s · %2$s”将被删除，并从当日统计与子项时长中扣除。</string>
+    <string name="session_delete_deduction_message">“%1$s · 手动扣减 %2$s”将被删除。删除后会撤销这次扣减，并恢复相应的当日统计与子项时长。</string>
 </resources>
