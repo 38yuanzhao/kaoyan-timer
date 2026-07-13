@@ -4,10 +4,12 @@ import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -20,11 +22,22 @@ import java.util.TimeZone
 @Composable
 fun KaoyanDatePickerDialog(
     initialDate: String,
+    latestDate: String? = null,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit
 ) {
     val initMillis = parseDateToUtcMillis(initialDate)
-    val dpState = rememberDatePickerState(initialSelectedDateMillis = initMillis)
+    val selectableDates = remember(latestDate) {
+        val latestMillis = latestDate?.let(::parseDateToUtcMillis)
+        object : SelectableDates {
+            override fun isSelectableDate(utcTimeMillis: Long): Boolean =
+                latestMillis == null || utcTimeMillis <= latestMillis
+        }
+    }
+    val dpState = rememberDatePickerState(
+        initialSelectedDateMillis = initMillis,
+        selectableDates = selectableDates
+    )
     DatePickerDialog(
         onDismissRequest = onDismiss,
         confirmButton = {

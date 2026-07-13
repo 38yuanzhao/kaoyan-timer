@@ -36,6 +36,12 @@ import java.util.UUID
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
+internal fun resolveManualDayKey(selectedDayKey: String?, now: Long): String? {
+    val today = TimeUtil.todayKey(now)
+    val dayKey = if (selectedDayKey == null) today else TimeUtil.canonicalDayKey(selectedDayKey) ?: return null
+    return dayKey.takeIf { it <= today }
+}
+
 class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
 
     private val store = Store(app.applicationContext)
@@ -275,13 +281,13 @@ class KaoyanViewModel(app: Application) : AndroidViewModel(app) {
         publish(s)
     }
 
-    fun manualAdd(id: String, minutes: Double) {
+    fun manualAdd(id: String, minutes: Double, selectedDayKey: String? = null) {
         val s = copyState(_state.value)
         val now = System.currentTimeMillis()
         val item = findItem(s, id) ?: return
         val requestedSecs = minutes * 60.0
         val itemAdjustment = applyNonNegativeDelta(item.seconds, requestedSecs)
-        val key = TimeUtil.todayKey(now)
+        val key = resolveManualDayKey(selectedDayKey, now) ?: return
         val subject = subjectNameOf(s, id)
         val dailyAdjustment = applyNonNegativeDelta(s.daily[key] ?: 0.0, requestedSecs)
         val subjectAdjustment = if (subject.isNotEmpty()) {

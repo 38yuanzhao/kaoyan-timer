@@ -31,6 +31,7 @@ import com.kaoyan.timer.model.AppState
 import com.kaoyan.timer.model.Item
 import com.kaoyan.timer.model.Subject
 import com.kaoyan.timer.model.Templates
+import com.kaoyan.timer.util.TimeUtil
 import com.kaoyan.timer.util.fmt
 
 /** 专注页的科目计时列表:运行中科目自动置顶。 */
@@ -244,9 +245,10 @@ private fun SubjectCard(
     if (showManual && current != null) {
         ManualAddDialog(
             title = "手动调整 · ${subject.name}${if (multi) " · ${current.name}" else ""}",
+            todayDate = TimeUtil.todayKey(now),
             onDismiss = { showManual = false },
-            onConfirm = { minutes ->
-                vm.manualAdd(current.id, minutes)
+            onConfirm = { minutes, dayKey ->
+                vm.manualAdd(current.id, minutes, dayKey)
                 showManual = false
             }
         )
