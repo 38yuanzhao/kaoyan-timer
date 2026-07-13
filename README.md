@@ -45,7 +45,7 @@
 
 ## 更新
 
-最新 **v2.6**:在设置页新增 GitHub 检查更新与 APK 下载,支持版本号正确比较、可信下载地址校验和 Android 7–9 存储权限处理。更早的 **v2.5** 新增每日学习目标、月度热力图、学习记录明细和桌面小组件。历史版本见 [Releases](https://github.com/38yuanzhao/kaoyan-timer/releases)。
+最新 **v2.7**:手动调整学习时间时可按需修改归属日期,默认仍记入当天。更早的 **v2.6** 在设置页新增 GitHub 检查更新与 APK 下载。历史版本见 [Releases](https://github.com/38yuanzhao/kaoyan-timer/releases)。
 
 ## 开发者:本地构建与技术栈
 

@@ -167,10 +167,13 @@ fun WheelLabelPicker(
 @Composable
 fun ManualAddDialog(
     title: String,
+    todayDate: String,
     onDismiss: () -> Unit,
-    onConfirm: (Double) -> Unit
+    onConfirm: (Double, String) -> Unit
 ) {
     var text by remember { mutableStateOf("") }
+    var selectedDate by remember { mutableStateOf(todayDate) }
+    var showDatePicker by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title, color = ColorFg) },
@@ -185,12 +188,21 @@ fun ManualAddDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
                 )
+                TextButton(
+                    onClick = { showDatePicker = true },
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text(
+                        if (selectedDate == todayDate) "日期：今天" else "日期：$selectedDate",
+                        color = ColorMuted
+                    )
+                }
             }
         },
         confirmButton = {
             TextButton(onClick = {
                 val v = text.trim().toDoubleOrNull()
-                if (v != null) onConfirm(v)
+                if (v != null) onConfirm(v, selectedDate)
             }) { Text("确定", color = ColorGood) }
         },
         dismissButton = {
@@ -200,6 +212,18 @@ fun ManualAddDialog(
         titleContentColor = ColorFg,
         textContentColor = ColorFg
     )
+
+    if (showDatePicker) {
+        KaoyanDatePickerDialog(
+            initialDate = selectedDate,
+            latestDate = todayDate,
+            onDismiss = { showDatePicker = false },
+            onConfirm = { date ->
+                selectedDate = date
+                showDatePicker = false
+            }
+        )
+    }
 }
 
 /** 简单确认对话框 */
